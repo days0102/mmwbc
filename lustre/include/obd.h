@@ -942,6 +942,9 @@ struct md_op_data {
 	__u32			op_stripe_index;
 	/* Archive ID for PCC attach */
 	__u32			op_archive_id;
+
+	/* XXX here for now for async creates, but perhaps removed later */
+	__u64			op_rdev;
 };
 
 struct md_callback {
@@ -956,8 +959,9 @@ typedef int (*md_op_item_cb_t)(struct req_capsule *pill,
 			       int rc);
 
 enum md_opcode {
-	MD_OP_NONE	= 0,
-	MD_OP_GETATTR	= 1,
+	MD_OP_NONE		= 0,
+	MD_OP_GETATTR		= 1,
+	MD_OP_CREATE_EXLOCK	= 2,
 	MD_OP_MAX,
 };
 
@@ -969,8 +973,11 @@ struct md_op_item {
 	struct ldlm_enqueue_info	 mop_einfo;
 	md_op_item_cb_t			 mop_cb;
 	void				*mop_cbdata;
-	struct inode			*mop_dir;
 	__u64				 mop_lock_flags;
+	union {
+		struct inode		*mop_dir;
+		struct dentry		*mop_dentry;
+	};
 };
 
 enum lu_batch_flags {
@@ -1157,6 +1164,10 @@ struct md_ops {
 			     struct lookup_intent *,
 			     struct ptlrpc_request **,
 			     ldlm_blocking_callback, __u64);
+
+	int (*m_intent_lock_async)(struct obd_export *,
+				   struct md_op_item *,
+				   struct ptlrpc_request_set *);
 
 	int (*m_link)(struct obd_export *, struct md_op_data *,
 		      struct ptlrpc_request **);
