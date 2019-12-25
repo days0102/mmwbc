@@ -1771,8 +1771,15 @@ static int ll_mkdir(struct inode *dir, struct dentry *dchild, umode_t mode)
 		/* Obtain WBC EX lock. */
 		if (mkdir_it.it_lock_mode == LCK_EX && excl_cache) {
 			rc = wbc_root_init(dir, inode, dchild);
-			if (!(rc || bits & MDS_INODELOCK_LOOKUP))
+			if (rc)
+				GOTO(out_fini, rc);
+
+			if (!(bits & MDS_INODELOCK_LOOKUP))
 				d_lustre_revalidate(dchild);
+
+			/* Save the lock handle of the root WBC EX lock. */
+			ll_i2wbci(inode)->wbci_lock_handle.cookie =
+					mkdir_it.it_lock_handle;
 		}
 	}
 

@@ -2732,7 +2732,7 @@ enum lu_wbc_flush_mode {
 	 * the root WBC EX lock actively unless it has to in the following
 	 * cases:
 	 * - The client needs to revoke the cached root WBC EX lock when the
-	 *   directory is Conflict accessing from a remote client or shrink
+	 *   directory is conflict accessing from a remote client or shrink
 	 *   the LRU locks in the client lock namespace;
 	 * - sync(2) or fsync(2) is called on a file or directory under this
 	 *   root WBC EX lock;
@@ -2765,7 +2765,7 @@ enum lu_wbc_flush_mode {
 	 * the WBC EX lock for the root WBC directory never drops actively
 	 * unless it has to in the following cases:
 	 * - The client needs to revoke the cached root WBC EX lock when the
-	 *   directory is Conflict accessing from a remote client or shrink
+	 *   directory is conflict accessing from a remote client or shrink
 	 *   the LRU locks in the client lock namespace;
 	 * - A application or a user wants to cleanup or uncache the cached
 	 *   data on the client manually.
@@ -2868,6 +2868,10 @@ static inline const char *wbc_flushmode2string(enum lu_wbc_flush_mode mode)
 		return "none";
 	case WBC_FLUSH_LAZY_DROP:
 		return "lazy_drop";
+	case WBC_FLUSH_AGING_DROP:
+		return "aging_drop";
+	case WBC_FLUSH_AGING_KEEP:
+		return "aging_keep";
 	default:
 		return "fault";
 	}

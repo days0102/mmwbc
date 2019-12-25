@@ -61,6 +61,7 @@ struct wbc_inode {
 	 */
 	enum lu_wbc_cache_mode	wbci_cache_mode;
 	enum lu_wbc_flush_mode	wbci_flush_mode;
+	struct lustre_handle	wbci_lock_handle;
 };
 
 struct wbc_dentry {
@@ -139,4 +140,5 @@ void wbc_inode_lock_callback(struct inode *inode, struct ldlm_lock *lock,
 			     bool *cached);
 int wbc_root_init(struct inode *dir, struct inode *inode,
 		  struct dentry *dentry);
+int wbc_write_inode(struct inode *inode, struct writeback_control *wbc);
 #endif /* LLITE_WBC_H */
