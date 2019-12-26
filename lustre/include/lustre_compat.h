@@ -607,4 +607,8 @@ static inline void ll_security_release_secctx(char *secdata, u32 seclen)
 #endif
 }
 
+#ifndef HAVE_SETATTR_PREPARE
+#define setattr_prepare(de, attr)	inode_change_ok((de)->d_inode, attr)
+#endif
+
 #endif /* _LUSTRE_COMPAT_H */

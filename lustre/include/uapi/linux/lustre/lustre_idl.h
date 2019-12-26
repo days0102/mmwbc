@@ -1966,6 +1966,7 @@ enum mds_op_bias {
 	MDS_CLOSE_UPDATE_TIMES	= 1 << 20,
 	/* setstripe create only, don't restripe if target exists */
 	MDS_SETSTRIPE_CREATE	= 1 << 21,
+	MDS_WBC_LOCKLESS	= 1 << 22,
 };
 
 #define MDS_CLOSE_INTENT (MDS_HSM_RELEASE | MDS_CLOSE_LAYOUT_SWAP |         \
