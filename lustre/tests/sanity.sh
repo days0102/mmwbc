@@ -162,6 +162,12 @@ check_and_setup_lustre
 DIR=${DIR:-$MOUNT}
 assert_DIR
 
+if [ "x$WBC" = "xyes" ] ; then
+	stack_trap "$LCTL wbc disable $MOUNT" EXIT
+	eval $CONF || error "failed to setup WBC: $CONF"
+	$LCTL wbc conf $MOUNT
+fi
+
 MAXFREE=${MAXFREE:-$((200000 * $OSTCOUNT))}
 
 [ -f $DIR/d52a/foo ] && chattr -a $DIR/d52a/foo
