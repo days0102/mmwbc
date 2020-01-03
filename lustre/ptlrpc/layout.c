@@ -543,6 +543,27 @@ static const struct req_msg_field *ldlm_intent_getxattr_server[] = {
 	&RMF_EAVALS_LENS
 };
 
+static const struct req_msg_field *ldlm_intent_setattr_client[] = {
+	&RMF_PTLRPC_BODY,
+	&RMF_DLM_REQ,
+	&RMF_LDLM_INTENT,
+	&RMF_REC_REINT,
+	&RMF_CAPA1,
+	&RMF_MDT_EPOCH,
+	&RMF_EADATA,
+	&RMF_LOGCOOKIES,
+};
+
+static const struct req_msg_field *ldlm_intent_setattr_server[] = {
+	&RMF_PTLRPC_BODY,
+	&RMF_DLM_REP,
+	&RMF_MDT_BODY,
+	&RMF_MDT_MD,
+	&RMF_ACL,
+	&RMF_CAPA1,
+	&RMF_CAPA2
+};
+
 static const struct req_msg_field *mds_get_root_client[] = {
 	&RMF_PTLRPC_BODY,
 	&RMF_MDT_BODY,
@@ -580,6 +601,13 @@ static const struct req_msg_field *mds_setattr_server[] = {
         &RMF_ACL,
         &RMF_CAPA1,
         &RMF_CAPA2
+};
+
+static const struct req_msg_field *mds_create_server[] = {
+	&RMF_PTLRPC_BODY,
+	&RMF_MDT_BODY,
+	&RMF_MDT_MD,
+	&RMF_CAPA1,
 };
 
 static const struct req_msg_field *mds_batch_client[] = {
@@ -816,6 +844,7 @@ static struct req_format *req_formats[] = {
 	&RQF_MDS_REINT_CREATE_ACL,
 	&RQF_MDS_REINT_CREATE_SLAVE,
 	&RQF_MDS_REINT_CREATE_SYM,
+	&RQF_MDS_REINT_CREATE_REG,
 	&RQF_MDS_REINT_OPEN,
 	&RQF_MDS_REINT_UNLINK,
 	&RQF_MDS_REINT_LINK,
@@ -875,6 +904,7 @@ static struct req_format *req_formats[] = {
 	&RQF_LDLM_INTENT_CREATE,
 	&RQF_LDLM_INTENT_GETXATTR,
 	&RQF_LDLM_INTENT_QUOTA,
+	&RQF_LDLM_INTENT_SETATTR,
 	&RQF_QUOTA_DQACQ,
 	&RQF_LLOG_ORIGIN_HANDLE_CREATE,
 	&RQF_LLOG_ORIGIN_HANDLE_NEXT_BLOCK,
@@ -1517,6 +1547,11 @@ struct req_format RQF_MDS_REINT_CREATE_SYM =
                         mds_reint_create_sym_client, mdt_body_capa);
 EXPORT_SYMBOL(RQF_MDS_REINT_CREATE_SYM);
 
+struct req_format RQF_MDS_REINT_CREATE_REG =
+	DEFINE_REQ_FMT0("MDS_REINT_CREATE_REG",
+			mds_reint_create_acl_client, mds_create_server);
+EXPORT_SYMBOL(RQF_MDS_REINT_CREATE_REG);
+
 struct req_format RQF_MDS_REINT_OPEN =
         DEFINE_REQ_FMT0("MDS_REINT_OPEN",
                         mds_reint_open_client, mds_reint_open_server);
@@ -1651,6 +1686,11 @@ struct req_format RQF_LDLM_INTENT_GETXATTR =
 			ldlm_intent_getxattr_client,
 			ldlm_intent_getxattr_server);
 EXPORT_SYMBOL(RQF_LDLM_INTENT_GETXATTR);
+
+struct req_format RQF_LDLM_INTENT_SETATTR =
+	DEFINE_REQ_FMT0("LDLM_INTENT_SETATTR",
+			ldlm_intent_setattr_client, ldlm_intent_setattr_server);
+EXPORT_SYMBOL(RQF_LDLM_INTENT_SETATTR);
 
 struct req_format RQF_MDS_CLOSE =
         DEFINE_REQ_FMT0("MDS_CLOSE",
