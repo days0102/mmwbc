@@ -1795,5 +1795,6 @@ int mdc_intent_lock_async(struct obd_export *exp,
 	aa->ita_item = item;
 
 	ptlrpc_set_add_req(rqset, it->it_request);
+	ptlrpc_check_set(NULL, rqset);
 	RETURN(0);
 }
