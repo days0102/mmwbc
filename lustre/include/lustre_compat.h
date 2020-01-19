@@ -611,4 +611,20 @@ static inline void ll_security_release_secctx(char *secdata, u32 seclen)
 #define setattr_prepare(de, attr)	inode_change_ok((de)->d_inode, attr)
 #endif
 
+static inline int simple_setattr_no_dirty(struct dentry *dentry,
+					  struct iattr *attr)
+{
+	struct inode *inode = d_inode(dentry);
+	int rc;
+
+	rc = setattr_prepare(dentry, attr);
+	if (rc)
+		return rc;
+
+	if (attr->ia_valid & ATTR_SIZE)
+		truncate_setsize(inode, attr->ia_size);
+	setattr_copy(inode, attr);
+	return 0;
+}
+
 #endif /* _LUSTRE_COMPAT_H */

@@ -103,7 +103,10 @@ static struct ll_sb_info *ll_init_sbi(void)
 	if (rc < 0)
 		GOTO(out_sbi, rc);
 
-	wbc_super_init(&sbi->ll_wbc_super);
+	rc = wbc_super_init(&sbi->ll_wbc_super);
+	if (rc)
+		GOTO(out_pcc, rc);
+
 	spin_lock_init(&sbi->ll_lock);
 	mutex_init(&sbi->ll_lco.lco_lock);
 	spin_lock_init(&sbi->ll_pp_extent_lock);
@@ -121,7 +124,7 @@ static struct ll_sb_info *ll_init_sbi(void)
 				       0, CFS_CPT_ANY,
 				       sbi->ll_ra_info.ra_async_max_active);
 	if (IS_ERR(sbi->ll_ra_info.ll_readahead_wq))
-		GOTO(out_pcc, rc = PTR_ERR(sbi->ll_ra_info.ll_readahead_wq));
+		GOTO(out_wbc, rc = PTR_ERR(sbi->ll_ra_info.ll_readahead_wq));
 
 	/* initialize ll_cache data */
 	sbi->ll_cache = cl_cache_init(lru_page_max);
@@ -214,6 +217,8 @@ out_destroy_ra:
 		sbi->ll_cache = NULL;
 	}
 	destroy_workqueue(sbi->ll_ra_info.ll_readahead_wq);
+out_wbc:
+	wbc_super_fini(&sbi->ll_wbc_super);
 out_pcc:
 	pcc_super_fini(&sbi->ll_pcc_super);
 out_sbi:
@@ -261,6 +266,7 @@ static void ll_free_sbi(struct super_block *sb)
 				sizeof(struct ll_foreign_symlink_upcall_item));
 			sbi->ll_foreign_symlink_upcall_items = NULL;
 		}
+		wbc_super_fini(&sbi->ll_wbc_super);
 		pcc_super_fini(&sbi->ll_pcc_super);
 		OBD_FREE(sbi, sizeof(*sbi));
 	}
@@ -1809,7 +1815,8 @@ static int ll_md_setattr(struct dentry *dentry, struct md_op_data *op_data)
 			    !S_ISDIR(inode->i_mode)) {
 				ia_valid = op_data->op_attr.ia_valid;
 				op_data->op_attr.ia_valid &= ~TIMES_SET_FLAGS;
-				rc = simple_setattr(dentry, &op_data->op_attr);
+				rc = simple_setattr_no_dirty(dentry,
+							     &op_data->op_attr);
 				op_data->op_attr.ia_valid = ia_valid;
 			}
 		} else if (rc != -EPERM && rc != -EACCES && rc != -ETXTBSY) {
@@ -1831,7 +1838,7 @@ static int ll_md_setattr(struct dentry *dentry, struct md_op_data *op_data)
 	op_data->op_attr.ia_valid &= ~(TIMES_SET_FLAGS | ATTR_SIZE);
 	if (S_ISREG(inode->i_mode))
 		inode_lock(inode);
-	rc = simple_setattr(dentry, &op_data->op_attr);
+	rc = simple_setattr_no_dirty(dentry, &op_data->op_attr);
 	if (S_ISREG(inode->i_mode))
 		inode_unlock(inode);
 	op_data->op_attr.ia_valid = ia_valid;
@@ -2106,6 +2113,7 @@ int ll_setattr_raw(struct dentry *dentry, struct iattr *attr,
 
 	op_data->op_attr = *attr;
 	op_data->op_xvalid = xvalid;
+	op_data->op_bias |= wbc_md_op_bias(ll_i2wbci(inode));
 
 	rc = ll_md_setattr(dentry, op_data);
 	if (rc)
@@ -2501,7 +2509,8 @@ int ll_update_inode(struct inode *inode, struct lustre_md *md)
 		inode->i_gid = make_kgid(&init_user_ns, body->mbo_gid);
 	if (body->mbo_valid & OBD_MD_FLPROJID)
 		lli->lli_projid = body->mbo_projid;
-	if (body->mbo_valid & OBD_MD_FLNLINK)
+	if (body->mbo_valid & OBD_MD_FLNLINK &&
+	    !wbc_inode_has_protected(ll_i2wbci(inode)))
 		set_nlink(inode, body->mbo_nlink);
 	if (body->mbo_valid & OBD_MD_FLRDEV)
 		inode->i_rdev = old_decode_dev(body->mbo_rdev);
@@ -2651,6 +2660,8 @@ void ll_delete_inode(struct inode *inode)
 	}
 
 	ll_truncate_inode_pages_final(inode);
+
+	wbc_free_inode(inode);
 	ll_clear_inode(inode);
 	clear_inode(inode);
 
