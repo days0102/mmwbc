@@ -943,6 +943,7 @@ struct ll_file_data {
 	 * layout version for verification to OST objects */
 	__u32 fd_layout_version;
 	struct pcc_file fd_pcc_file;
+	struct list_head fd_wbc_open_item;
 };
 
 void llite_tunables_unregister(void);
