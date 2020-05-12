@@ -943,7 +943,7 @@ struct ll_file_data {
 	 * layout version for verification to OST objects */
 	__u32 fd_layout_version;
 	struct pcc_file fd_pcc_file;
-	struct list_head fd_wbc_open_item;
+	struct wbc_file fd_wbc_file;
 };
 
 void llite_tunables_unregister(void);
@@ -1768,6 +1768,11 @@ static inline struct wbc_super *ll_s2wbcs(struct super_block *sb)
 static inline struct wbc_conf *ll_s2wbcc(struct super_block *sb)
 {
 	return &ll_s2wbcs(sb)->wbcs_conf;
+}
+
+static inline struct wbc_conf *ll_i2wbcc(struct inode *inode)
+{
+	return &ll_i2wbcs(inode)->wbcs_conf;
 }
 
 static inline bool ll_data_in_lustre(struct inode *inode)
