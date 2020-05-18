@@ -1814,6 +1814,61 @@ lmv_op_default_specific_mkdir(const struct md_op_data *op_data)
 			LMV_OFFSET_DEFAULT;
 }
 
+struct lmv_tgt_desc *lmv_locate_tgt_create(struct obd_device *obd,
+					   struct lmv_obd *lmv,
+					   struct md_op_data *op_data)
+{
+	struct lmv_tgt_desc *tgt;
+
+	ENTRY;
+
+	tgt = lmv_locate_tgt(lmv, op_data);
+	if (IS_ERR(tgt))
+		RETURN(tgt);
+
+	if (lmv_op_user_specific_mkdir(op_data)) {
+		struct lmv_user_md *lum = op_data->op_data;
+
+		op_data->op_mds = le32_to_cpu(lum->lum_stripe_offset);
+		tgt = lmv_tgt(lmv, op_data->op_mds);
+		if (!tgt)
+			RETURN(ERR_PTR(-ENODEV));
+	} else if (lmv_op_default_specific_mkdir(op_data)) {
+		op_data->op_mds =
+			op_data->op_default_mea1->lsm_md_master_mdt_index;
+		tgt = lmv_tgt(lmv, op_data->op_mds);
+		if (!tgt)
+			RETURN(ERR_PTR(-ENODEV));
+	} else if (lmv_op_qos_mkdir(op_data)) {
+		struct lmv_tgt_desc *tmp = tgt;
+
+		tgt = lmv_locate_tgt_qos(lmv, &op_data->op_mds);
+		if (tgt == ERR_PTR(-EAGAIN)) {
+			if (ltd_qos_is_balanced(&lmv->lmv_mdt_descs) &&
+			    !lmv_op_default_rr_mkdir(op_data) &&
+			    !lmv_op_user_qos_mkdir(op_data))
+				/* if it's not necessary, don't create remote
+				 * directory.
+				 */
+				tgt = tmp;
+			else
+				tgt = lmv_locate_tgt_rr(lmv, &op_data->op_mds);
+		}
+		if (IS_ERR(tgt))
+			RETURN(tgt);
+
+		/*
+		 * only update statfs after QoS mkdir, this means the cached
+		 * statfs may be stale, and current mkdir may not follow QoS
+		 * accurately, but it's not serious, and avoids periodic statfs
+		 * when client doesn't mkdir by QoS.
+		 */
+		lmv_statfs_check_update(obd, tgt);
+	}
+
+	RETURN(tgt);
+}
+
 int lmv_create(struct obd_export *exp, struct md_op_data *op_data,
 		const void *data, size_t datalen, umode_t mode, uid_t uid,
 		gid_t gid, cfs_cap_t cap_effective, __u64 rdev,
@@ -1845,49 +1900,9 @@ int lmv_create(struct obd_export *exp, struct md_op_data *op_data,
 		op_data->op_new_layout = true;
 	}
 
-	tgt = lmv_locate_tgt(lmv, op_data);
+	tgt = lmv_locate_tgt_create(obd, lmv, op_data);
 	if (IS_ERR(tgt))
 		RETURN(PTR_ERR(tgt));
-
-	if (lmv_op_user_specific_mkdir(op_data)) {
-		struct lmv_user_md *lum = op_data->op_data;
-
-		op_data->op_mds = le32_to_cpu(lum->lum_stripe_offset);
-		tgt = lmv_tgt(lmv, op_data->op_mds);
-		if (!tgt)
-			RETURN(-ENODEV);
-	} else if (lmv_op_default_specific_mkdir(op_data)) {
-		op_data->op_mds =
-			op_data->op_default_mea1->lsm_md_master_mdt_index;
-		tgt = lmv_tgt(lmv, op_data->op_mds);
-		if (!tgt)
-			RETURN(-ENODEV);
-	} else if (lmv_op_qos_mkdir(op_data)) {
-		struct lmv_tgt_desc *tmp = tgt;
-
-		tgt = lmv_locate_tgt_qos(lmv, &op_data->op_mds);
-		if (tgt == ERR_PTR(-EAGAIN)) {
-			if (ltd_qos_is_balanced(&lmv->lmv_mdt_descs) &&
-			    !lmv_op_default_rr_mkdir(op_data) &&
-			    !lmv_op_user_qos_mkdir(op_data))
-				/* if it's not necessary, don't create remote
-				 * directory.
-				 */
-				tgt = tmp;
-			else
-				tgt = lmv_locate_tgt_rr(lmv, &op_data->op_mds);
-		}
-		if (IS_ERR(tgt))
-			RETURN(PTR_ERR(tgt));
-
-		/*
-		 * only update statfs after QoS mkdir, this means the cached
-		 * statfs may be stale, and current mkdir may not follow QoS
-		 * accurately, but it's not serious, and avoids periodic statfs
-		 * when client doesn't mkdir by QoS.
-		 */
-		lmv_statfs_check_update(obd, tgt);
-	}
 
 retry:
 	rc = lmv_fid_alloc(NULL, exp, &op_data->op_fid2, op_data);

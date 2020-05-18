@@ -1673,8 +1673,14 @@ out:
 
 static int ll_mkdir(struct inode *dir, struct dentry *dchild, umode_t mode)
 {
+	struct lookup_intent mkdir_it = { .it_op = IT_CREAT };
+	struct ll_sb_info *sbi = ll_i2sbi(dir);
+	struct ptlrpc_request *request = NULL;
+	struct md_op_data *op_data;
+	struct inode *inode = NULL;
 	ktime_t kstart = ktime_get();
-	int err;
+	int rc;
+
 	ENTRY;
 
 	CDEBUG(D_VFSTRACE, "VFS Op:name=%pd, dir="DFID"(%p)\n",
@@ -1683,14 +1689,88 @@ static int ll_mkdir(struct inode *dir, struct dentry *dchild, umode_t mode)
 	if (!IS_POSIXACL(dir) || !exp_connect_umask(ll_i2mdexp(dir)))
 		mode &= ~current_umask();
 
-	mode = (mode & (S_IRWXUGO|S_ISVTX)) | S_IFDIR;
+	mkdir_it.it_create_mode = (mode & (S_IRWXUGO | S_ISVTX)) | S_IFDIR;
 
-	err = ll_new_node(dir, dchild, NULL, mode, 0, LUSTRE_OPC_MKDIR);
-	if (err == 0)
-		ll_stats_ops_tally(ll_i2sbi(dir), LPROC_LL_MKDIR,
+	op_data = ll_prep_md_op_data(NULL, dir, NULL, dchild->d_name.name,
+				     dchild->d_name.len, mode, LUSTRE_OPC_MKDIR,
+				     NULL);
+	if (IS_ERR(op_data))
+		RETURN(PTR_ERR(op_data));
+
+	if ((sbi->ll_flags & LL_SBI_FILE_SECCTX)) {
+		rc = ll_dentry_init_security(dchild, mode, &dchild->d_name,
+					     &op_data->op_file_secctx_name,
+					     &op_data->op_file_secctx,
+					     &op_data->op_file_secctx_size);
+		if (rc < 0)
+			GOTO(out_fini, rc);
+	}
+
+	rc = md_intent_lock(sbi->ll_md_exp, op_data, &mkdir_it,
+			    &request, &ll_md_blocking_ast, 0);
+	if (rc)
+		GOTO(out_fini, rc);
+
+	/* dir layout may change */
+	ll_unlock_md_op_lsm(op_data);
+
+	ll_update_times(request, dir);
+
+	CFS_FAIL_TIMEOUT(OBD_FAIL_LLITE_NEWNODE_PAUSE, cfs_fail_val);
+
+	rc = ll_prep_inode(&inode, &request->rq_pill, dchild->d_sb, &mkdir_it);
+	if (rc)
+		GOTO(out_fini, rc);
+
+	if (sbi->ll_flags & LL_SBI_FILE_SECCTX) {
+		inode_lock(inode);
+		/* must be done before d_instantiate, because it calls
+		 * security_d_instantiate, which means a getxattr if security
+		 * context is not set yet
+		 */
+		rc = security_inode_notifysecctx(inode,
+						 op_data->op_file_secctx,
+						 op_data->op_file_secctx_size);
+		inode_unlock(inode);
+		if (rc)
+			GOTO(out_fini, rc);
+	}
+
+	if (d_unhashed(dchild)) {
+		rc = ll_d_init(dchild);
+		if (rc)
+			GOTO(out_fini, rc);
+
+		d_add(dchild, inode);
+	} else {
+		d_instantiate(dchild, inode);
+	}
+
+	if (!(sbi->ll_flags & LL_SBI_FILE_SECCTX)) {
+		rc = ll_inode_init_security(dchild, inode, dir);
+		if (rc)
+			GOTO(out_fini, rc);
+	}
+
+	if (mkdir_it.it_lock_mode) {
+		__u64 bits = 0;
+
+		LASSERT(it_disposition(&mkdir_it, DISP_LOOKUP_NEG));
+		ll_set_lock_data(sbi->ll_md_exp, inode, &mkdir_it, &bits);
+		if (bits & MDS_INODELOCK_LOOKUP)
+			d_lustre_revalidate(dchild);
+	}
+
+out_fini:
+	ll_finish_md_op_data(op_data);
+	ll_intent_release(&mkdir_it);
+	ptlrpc_req_finished(request);
+
+	if (rc == 0)
+		ll_stats_ops_tally(sbi, LPROC_LL_MKDIR,
 				   ktime_us_delta(ktime_get(), kstart));
 
-	RETURN(err);
+	RETURN(rc);
 }
 
 static int ll_rmdir(struct inode *dir, struct dentry *dchild)

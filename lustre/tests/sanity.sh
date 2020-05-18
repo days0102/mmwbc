@@ -26389,6 +26389,26 @@ test_902() {
 }
 run_test 902 "test short write doesn't hang lustre"
 
+test_903() {
+	[ $MDSCOUNT -lt 2 ] && skip "needs >= 2 MDTs" && return 0
+	[[ "$MDS1_VERSION" -ge $(version_code 2.13.55) ]] ||
+		skip "Need MDS version at least 2.13.55"
+
+	test_mkdir -p -c$MDSCOUNT $DIR/$tdir
+	if [ $MDSCOUNT -ge 2 ]; then
+		$LFS setdirstripe -D -c$MDSCOUNT $DIR/$tdir ||
+			error "set default dirstripe failed"
+	fi
+
+	mkdir $DIR/$tdir/tdir || error "mkdir tdir failed"
+	mkdir $DIR/$tdir/tdir/tfile || error "mkdir tdir/tfile failed"
+	touch -d "2020-08-25 15:08" $DIR/$tdir/tdir/tfile ||
+		error "touch time failed"
+	chown 0:0 $DIR/$tdir/tdir/tfile || error "chown 0:0 tdir/tfile failed"
+	chmod 755 $DIR/$tdir/tdir/tfile || error "chmod 755 tdir/tfile failed"
+}
+run_test 903 "mkdir using intent lock for striped directory"
+
 complete $SECONDS
 [ -f $EXT2_DEV ] && rm $EXT2_DEV || true
 check_and_cleanup_lustre
