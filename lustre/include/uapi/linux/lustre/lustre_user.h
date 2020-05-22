@@ -634,6 +634,7 @@ struct ll_ioc_lease_id {
 #define LL_IOC_PCC_DETACH_BY_FID	_IOW('f', 252, struct lu_pcc_detach_fid)
 #define LL_IOC_PCC_STATE		_IOR('f', 252, struct lu_pcc_state)
 #define LL_IOC_WBC_STATE		_IOR('f', 253, struct lu_wbc_state)
+#define LL_IOC_WBC_UNRESERVE		_IOW('f', 253, struct lu_wbc_unreserve)
 
 #ifndef	FS_IOC_FSGETXATTR
 /*
@@ -2878,6 +2879,10 @@ struct lu_wbc_state {
 	__u32			wbcs_open_count;
 	/* Reserved for the path of data on PCC after supported. */
 	char			wbcs_path[PATH_MAX];
+};
+
+struct lu_wbc_unreserve {
+	__u32	wbcu_unrsv_siblings:1;
 };
 
 static inline const char *wbc_cachemode2string(enum lu_wbc_cache_mode mode)
