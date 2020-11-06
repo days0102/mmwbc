@@ -1732,6 +1732,56 @@ test_26() {
 }
 run_test 26 "WBC pages reclaim mechanism with 1 level direcotry"
 
+test_27_base() {
+	local flush_mode=$1
+	local dir="$DIR/$tdir"
+	local nr_level=$2
+	local level=$3
+
+	[ $MDSCOUNT -lt 2 ] && skip_env "needs >= 2 MDTs"
+
+	echo "== flush_mode=$flush_mode nr_level=$nr_level level=$level  =="
+	setup_wbc "flush_mode=$flush_mode"
+
+	$LFS mkdir -c $MDSCOUNT -H crush $dir || error "mkdir $dir failed"
+	check_wbc_flags $dir "0x00000000"
+	echo "$dir LMV info:"
+	$LFS getdirstripe $DIR/$tdir
+
+	local idx
+	local cidx
+	local parent
+	local child
+
+	for i in $(seq 1 $nr_level); do
+		parent="$dir/wbcroot.i$i"
+		mkdir $parent || error "mkdir $parent failed"
+		check_wbc_flags $parent "0x0000000f"
+		idx=$($LFS getstripe -m $parent)
+		echo -e "\nParent $parent mdt_index: $idx"
+		for l in $(seq 1 $level); do
+			for n in $(seq 1 $nr_level); do
+				child=$parent/dir_l$l.i$n
+				mkdir $child || error "mkdir $child failed"
+				cidx=$($LFS getstripe -m $child)
+				echo "Child $child mdt_index: $cidx"
+				[ $idx == $cidx ] || error "diff mdx idx"
+			done
+			parent+="/dir_l$l.i1"
+		done
+	done
+
+	rm -rf $dir || error "rm -rf $dir failed"
+}
+
+test_27() {
+	test_27_base "lazy_drop" 4 3
+	test_27_base "lazy_keep" 4 3
+	test_27_base "aging_drop" 4 3
+	test_27_base "aging_keep" 4 3
+}
+run_test 27 "DNE: Fids allocated on the target same with root WBC directory"
+
 test_sanity() {
 	local cmd="$LCTL set_param llite.*.wbc.conf=enable"
 

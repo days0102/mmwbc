@@ -2531,6 +2531,7 @@ int ll_update_inode(struct inode *inode, struct lustre_md *md)
 	LASSERT(fid_seq(&lli->lli_fid) != 0);
 
 	lli->lli_attr_valid = body->mbo_valid;
+	/* Dont update size for a WBC cached directory. */
 	if (body->mbo_valid & OBD_MD_FLSIZE &&
 	    !(S_ISDIR(inode->i_mode) &&
 	      wbc_inode_has_protected(ll_i2wbci(inode)))) {

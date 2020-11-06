@@ -852,6 +852,7 @@ enum md_cli_flags {
 	CLI_API32	= BIT(3),
 	CLI_MIGRATE	= BIT(4),
 	CLI_DIRTY_DATA	= BIT(5),
+	CLI_WBC_TGT	= BIT(6),
 };
 
 enum md_op_code {
