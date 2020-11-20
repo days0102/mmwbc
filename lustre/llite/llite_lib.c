@@ -179,6 +179,7 @@ static struct ll_sb_info *ll_init_sbi(void)
 
 	/* metadata statahead is enabled by default */
 	sbi->ll_sa_running_max = LL_SA_RUNNING_DEF;
+	sbi->ll_sa_batch_max = LL_SA_BATCH_DEF;
 	sbi->ll_sa_max = LL_SA_RPC_DEF;
 	atomic_set(&sbi->ll_sa_total, 0);
 	atomic_set(&sbi->ll_sa_wrong, 0);
@@ -336,7 +337,8 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
 				   OBD_CONNECT2_CRUSH | OBD_CONNECT2_LSEEK |
 				   OBD_CONNECT2_GETATTR_PFID |
 				   OBD_CONNECT2_DOM_LVB |
-				   OBD_CONNECT2_REP_MBITS;
+				   OBD_CONNECT2_REP_MBITS |
+				   OBD_CONNECT2_BATCH_RPC;
 
 #ifdef HAVE_LRU_RESIZE_SUPPORT
         if (sbi->ll_flags & LL_SBI_LRU_RESIZE)
