@@ -131,6 +131,13 @@ int mdc_revalidate_lock(struct obd_export *exp, struct lookup_intent *it,
 
 int mdc_intent_getattr_async(struct obd_export *exp, struct md_op_item *item);
 
+struct lu_batch *mdc_batch_create(struct obd_export *exp,
+				  enum lu_batch_flags flags, __u32 max_count);
+int mdc_batch_stop(struct obd_export *exp, struct lu_batch *bh);
+int mdc_batch_flush(struct obd_export *exp, struct lu_batch *bh, bool wait);
+int mdc_batch_add(struct obd_export *exp, struct lu_batch *bh,
+		  struct md_op_item *item);
+
 enum ldlm_mode mdc_lock_match(struct obd_export *exp, __u64 flags,
 			      const struct lu_fid *fid, enum ldlm_type type,
 			      union ldlm_policy_data *policy,

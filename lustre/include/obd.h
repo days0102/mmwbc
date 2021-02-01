@@ -972,6 +972,24 @@ struct md_op_item {
 	__u64				 mop_lock_flags;
 };
 
+enum lu_batch_flags {
+	BATCH_FL_NONE	= 0x0,
+	/* All requests in a batch are read-only. */
+	BATCH_FL_RDONLY	= 0x1,
+	/* Will create PTLRPC request set for the batch. */
+	BATCH_FL_RQSET	= 0x2,
+	/* Whether need sync commit. */
+	BATCH_FL_SYNC	= 0x4,
+};
+
+struct lu_batch {
+	struct ptlrpc_request_set	*bh_rqset;
+	__s32				 bh_result;
+	__u32				 bh_flags;
+	/* Max batched SUB requests count in a batch. */
+	__u32				 bh_max_count;
+};
+
 struct obd_ops {
 	struct module *o_owner;
 	int (*o_iocontrol)(unsigned int cmd, struct obd_export *exp, int len,
@@ -1219,6 +1237,14 @@ struct md_ops {
 			  const union lmv_mds_md *lmv, size_t lmv_size);
 	int (*m_rmfid)(struct obd_export *exp, struct fid_array *fa, int *rcs,
 		       struct ptlrpc_request_set *set);
+	struct lu_batch *(*m_batch_create)(struct obd_export *exp,
+					   enum lu_batch_flags flags,
+					   __u32 max_count);
+	int (*m_batch_stop)(struct obd_export *exp, struct lu_batch *bh);
+	int (*m_batch_flush)(struct obd_export *exp, struct lu_batch *bh,
+			     bool wait);
+	int (*m_batch_add)(struct obd_export *exp, struct lu_batch *bh,
+			   struct md_op_item *item);
 };
 
 static inline struct md_open_data *obd_mod_alloc(void)
