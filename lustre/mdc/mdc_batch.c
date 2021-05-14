@@ -383,11 +383,16 @@ static int batch_update_request_fini(struct batch_update_head *head,
 			 */
 			repmsg = NULL;
 			rc1 = -ECANCELED;
+			/*
+			 * TODO: resend the unfinished sub request when the
+			 * return code is -EOVERFLOW.
+			 */
 		}
 
 		if (ouc->ouc_interpret != NULL)
 			ouc->ouc_interpret(req, repmsg, ouc, rc1);
 
+		index++;
 		object_update_callback_fini(ouc);
 		if (rc == 0 && rc1 < 0)
 			rc = rc1;
@@ -643,7 +648,7 @@ static int mdc_batch_getattr_pack(struct batch_update_head *head,
 	req_capsule_set_size(&pill, &RMF_ACL, RCL_SERVER,
 			     LUSTRE_POSIX_ACL_MAX_SIZE_OLD);
 	req_capsule_set_size(&pill, &RMF_DEFAULT_MDT_MD, RCL_SERVER,
-			     sizeof(struct lmv_user_md));
+			     /*sizeof(struct lmv_user_md)*/MIN_MD_SIZE);
 
 	if (have_secctx) {
 		char *secctx_name;

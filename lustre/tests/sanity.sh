@@ -12411,6 +12411,31 @@ test_123c() {
 }
 run_test 123c "Can not initialize inode warning on DNE statahead"
 
+test_123d() {
+	local max
+	local batch_max
+	local dir=$DIR/$tdir
+
+	mkdir $dir || error "mkdir $dir failed"
+	$LFS setstripe -C 32 $dir || error "setstripe $dir failed"
+
+	touch $dir/$tfile.{0..1000} || error "touch 1000 files failed"
+
+	max=$($LCTL get_param -n llite.*.statahead_max | head -n 1)
+	batch_max=$($LCTL get_param -n llite.*.statahead_batch_max | head -n 1)
+
+	$LCTL set_param llite.*.statahead_max=2048
+	$LCTL set_param llite.*.statahead_batch_max=1024
+
+	ls -l $dir
+	lctl get_param mdc.*.batch_stats
+	lctl get_param llite.*.statahead_*
+
+	$LCTL set_param llite.*.statahead_max=$max
+	$LCTL set_param llite.*.statahead_batch_max=$batch_max
+}
+run_test 123d "statahead with large wide striping"
+
 test_124a() {
 	[ $PARALLEL == "yes" ] && skip "skip parallel run"
 	$LCTL get_param -n mdc.*.connect_flags | grep -q lru_resize ||
