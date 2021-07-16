@@ -1315,21 +1315,21 @@ static int mdt_create_unpack(struct mdt_thread_info *info)
 	if (S_ISLNK(attr->la_mode)) {
 		const char *tgt = NULL;
 
-		if (!info->mti_intent_lock) {
+		if (info->mti_intent_lock || req_capsule_subreq(pill)) {
+			/* Intent create or sub update request */
+			if (req_capsule_get_size(pill, &RMF_EADATA, RCL_CLIENT))
+				tgt = req_capsule_client_get(pill, &RMF_EADATA);
+		} else {
 			/* regular create */
 			req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_SYM);
 			if (req_capsule_get_size(pill, &RMF_SYMTGT, RCL_CLIENT))
 				tgt = req_capsule_client_get(pill, &RMF_SYMTGT);
-		} else {
-			/* Intent create */
-			if (req_capsule_get_size(pill, &RMF_EADATA, RCL_CLIENT))
-				tgt = req_capsule_client_get(pill, &RMF_EADATA);
 		}
 		sp->u.sp_symname = tgt;
 		if (tgt == NULL)
 			RETURN(-EFAULT);
 	} else {
-		if (!info->mti_intent_lock) {
+		if (!(info->mti_intent_lock || req_capsule_subreq(pill))) {
 			if (sp->sp_cr_flags & MDS_FMODE_WRITE &&
 			    S_ISREG(attr->la_mode))
 				req_capsule_extend(pill,
