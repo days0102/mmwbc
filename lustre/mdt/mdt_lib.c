@@ -1342,12 +1342,14 @@ static int mdt_create_unpack(struct mdt_thread_info *info)
 							RCL_CLIENT);
 		if (rr->rr_eadatalen > 0) {
 			sp->no_create = !!req_is_replay(mdt_info_req(info));
-			if (S_ISDIR(attr->la_mode)) {
+			if (S_ISDIR(attr->la_mode) ||
+			    sp->sp_cr_flags & MDS_OPEN_PCC) {
 				sp->u.sp_ea.eadata =
 					req_capsule_client_get(pill,
 							       &RMF_EADATA);
 				sp->u.sp_ea.eadatalen = rr->rr_eadatalen;
 				sp->sp_cr_flags |= MDS_OPEN_HAS_EA;
+				sp->sp_archive_id = rec->cr_archive_id;
 			}
 		}
 	}

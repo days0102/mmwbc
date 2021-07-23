@@ -961,6 +961,8 @@ static int __wbc_super_shrink_roots(struct wbc_super *super,
 	};
 	int rc = 0;
 
+	ENTRY;
+
 	LASSERT(shrink_list == &super->wbcs_lazy_roots ||
 		shrink_list == &super->wbcs_roots);
 
@@ -976,13 +978,13 @@ static int __wbc_super_shrink_roots(struct wbc_super *super,
 		if (rc) {
 			CERROR("Failed to flush file: "DFID"\n",
 			       PFID(&ll_i2info(inode)->lli_fid));
-			return rc;
+			RETURN(rc);
 		}
 		spin_lock(&super->wbcs_lock);
 	}
 	spin_unlock(&super->wbcs_lock);
 
-	return rc;
+	RETURN(rc);
 }
 
 int wbc_super_shrink_roots(struct wbc_super *super)
@@ -1353,6 +1355,8 @@ static int wbc_parse_value_pair(struct wbc_cmd *cmd, char *buffer)
 	if (strcmp(key, "cache_mode") == 0) {
 		if (strcmp(val, "memfs") == 0)
 			conf->wbcc_cache_mode = WBC_MODE_MEMFS;
+		else if (strcmp(val, "dop") == 0)
+			conf->wbcc_cache_mode = WBC_MODE_DATA_PCC;
 		else
 			return -EINVAL;
 

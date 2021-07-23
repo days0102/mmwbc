@@ -187,6 +187,13 @@ static void wbc_fini_op_item(struct md_op_item *item, int ioret)
 	security_release_secctx(op_data->op_file_secctx,
 				op_data->op_file_secctx_size);
 
+	if (item->mop_it.it_flags & MDS_OPEN_PCC) {
+		struct lov_user_md *lum = op_data->op_data;
+
+		LASSERT(op_data->op_data_size == sizeof(*lum));
+		OBD_FREE_PTR(lum);
+	}
+
 	wbc_context_note(item->mop_owner, ioret);
 	OBD_FREE_PTR(item);
 }
@@ -267,10 +274,12 @@ out_dput:
 
 static int wbc_fill_create_common(struct inode *dir,
 				  struct dentry *dchild,
-				  struct md_op_data *op_data,
-				  struct lookup_intent *it)
+				  struct md_op_item *item)
 {
+	struct md_op_data *op_data = &item->mop_data;
+	struct lookup_intent *it = &item->mop_it;
 	struct inode *inode = dchild->d_inode;
+	struct wbc_inode *wbci = ll_i2wbci(inode);
 	int opc;
 
 	ENTRY;
@@ -312,10 +321,33 @@ static int wbc_fill_create_common(struct inode *dir,
 
 		op_data->op_data = lli->lli_symlink_name;
 		op_data->op_data_size = strlen(lli->lli_symlink_name) + 1;
+	} else if (opc == LUSTRE_OPC_CREATE &&
+		   wbci->wbci_cache_mode == WBC_MODE_DATA_PCC) {
+		struct pcc_dataset *dataset;
+		struct lov_user_md *lum;
+
+		/* Set @rwid == 0, try to get the first available dataset. */
+		dataset = pcc_dataset_get(ll_i2pccs(inode),
+					  LU_PCC_READWRITE, 0);
+		if (dataset == NULL) /* TODO: fallback WBC_MODE_MEMFS. */
+			RETURN(-ENOENT);
+
+		OBD_ALLOC_PTR(lum);
+		if (lum == NULL)
+			RETURN(-ENOMEM);
+
+		lum->lmm_magic = LOV_USER_MAGIC_V1;
+		lum->lmm_pattern = LOV_PATTERN_F_RELEASED | LOV_PATTERN_RAID0;
+		op_data->op_data = lum;
+		op_data->op_data_size = sizeof(*lum);
+		op_data->op_archive_id = dataset->pccd_rwid;
+		wbci->wbci_archive_id = dataset->pccd_rwid;
+		it->it_flags |= MDS_OPEN_PCC;
+		pcc_dataset_put(dataset);
 	}
 
 	/* Tell lmv we got the child fid under control */
-	it->it_flags = MDS_OPEN_BY_FID;
+	it->it_flags |= MDS_OPEN_BY_FID;
 
 	if (!IS_POSIXACL(dir))
 		it->it_create_mode &= ~current_umask();
@@ -339,7 +371,8 @@ static int wbc_fill_create_common(struct inode *dir,
 		 *   for this regular file unless it is necessary if file size
 		 *   is zero.
 		 */
-		it->it_flags |= MDS_FMODE_WRITE;
+		if (!(it->it_flags & MDS_OPEN_PCC))
+			it->it_flags |= MDS_FMODE_WRITE;
 	} else if (S_ISLNK(inode->i_mode)) {
 		it->it_create_mode = S_IFLNK | S_IRWXUGO;
 	}
@@ -361,10 +394,9 @@ wbc_prep_create_exlock(struct inode *dir, struct dentry *dchild,
 	if (item == NULL)
 		return ERR_PTR(-ENOMEM);
 
-	rc = wbc_fill_create_common(dir, dchild,
-				    &item->mop_data, &item->mop_it);
+	rc = wbc_fill_create_common(dir, dchild, item);
 	if (rc) {
-		OBD_FREE_PTR(item);
+		wbc_fini_op_item(item, rc);
 		return ERR_PTR(rc);
 	}
 
@@ -607,8 +639,7 @@ wbc_prep_create_lockless(struct inode *dir, struct dentry *dchild,
 	if (item == NULL)
 		return ERR_PTR(-ENOMEM);
 
-	rc = wbc_fill_create_common(dir, dchild, &item->mop_data,
-				    &item->mop_it);
+	rc = wbc_fill_create_common(dir, dchild, item);
 	if (rc) {
 		OBD_FREE_PTR(item);
 		return ERR_PTR(rc);
@@ -886,12 +917,37 @@ static int wbc_do_create(struct inode *inode)
 	RETURN(rc);
 }
 
+static int wbc_commit_data_pcc(struct inode *inode)
+{
+	struct wbc_inode *wbci = ll_i2wbci(inode);
+	struct address_space *mapping = inode->i_mapping;
+	int nr_pages = mapping->nrpages;
+	int rc;
+
+	ENTRY;
+
+	rc = pcc_wbc_commit_data(inode, wbci->wbci_archive_id);
+	/* XXX failure handling. */
+	wbc_inode_data_lru_del(inode);
+	spin_lock(&inode->i_lock);
+	wbci->wbci_flags |= WBC_STATE_FL_DATA_COMMITTED;
+	wbc_inode_unacct_pages(inode, mapping->nrpages);
+	mapping->a_ops = &ll_aops;
+	spin_unlock(&inode->i_lock);
+
+	if (rc == 0)
+		rc = nr_pages;
+	mapping_clear_unevictable(mapping);
+
+	RETURN(rc);
+}
+
 /*
  * Write the cached data in MemFS into Lustre clio for an inode.
  * TODO: It need to ensure that generic IO must be blocked in this phase until
  * finished data assimilation.
  */
-int wbcfs_commit_cache_pages(struct inode *inode)
+static int wbc_commit_data_lustre(struct inode *inode)
 {
 	struct wbc_inode *wbci = ll_i2wbci(inode);
 	struct address_space *mapping = inode->i_mapping;
@@ -1072,6 +1128,18 @@ out:
 	mapping_clear_unevictable(mapping);
 
 	RETURN(rc);
+}
+
+int wbcfs_commit_cache_pages(struct inode *inode)
+{
+	switch (ll_i2wbci(inode)->wbci_cache_mode) {
+	case WBC_MODE_MEMFS:
+		return wbc_commit_data_lustre(inode);
+	case WBC_MODE_DATA_PCC:
+		return wbc_commit_data_pcc(inode);
+	default:
+		return -EOPNOTSUPP;
+	}
 }
 
 void wbc_free_inode_pages_final(struct inode *inode,
