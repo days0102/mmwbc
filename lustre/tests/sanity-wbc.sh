@@ -1840,6 +1840,23 @@ test_100() {
 }
 run_test 100 "MemFS lookup without atomic_open()"
 
+test_101() {
+	local dir=$DIR/$tdir
+	local file=$dir/$tfile
+
+	sysctl -w vm.dirty_expire_centisecs=500
+	sysctl -w vm.dirty_writeback_centisecs=400
+	setup_wbc "flush_mode=aging_drop"
+
+	#define OBD_FAIL_LLITE_WBC_FLUSH_PAUSE	0x1419
+	$LCTL set_param fail_loc=0x80001419 fail_val=20
+	mkdir $dir || error "mkdir $dir failed"
+	echo "SYNC_NONE" > $file || error "write $file failed"
+	$LFS wbc state $dir $file
+	$MULTIOP $file oyc
+}
+run_test 101 "Racer between two flusher thread with WB_SYNC_NONE mode"
+
 test_sanity() {
 	local cmd="$LCTL set_param llite.*.wbc.conf=enable"
 
