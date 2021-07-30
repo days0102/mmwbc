@@ -4407,7 +4407,7 @@ int ll_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct ll_inode_info *lli = ll_i2info(inode);
 	struct ptlrpc_request *req;
 	ktime_t kstart = ktime_get();
-	int rc, err;
+	int rc = 0, err;
 
 	ENTRY;
 
