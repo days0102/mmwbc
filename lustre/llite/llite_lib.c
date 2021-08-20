@@ -1170,7 +1170,7 @@ void ll_lli_init(struct ll_inode_info *lli)
 	}
 	mutex_init(&lli->lli_layout_mutex);
 	memset(lli->lli_jobid, 0, sizeof(lli->lli_jobid));
-	wbc_inode_init(&lli->lli_wbc_inode);
+	wbc_inode_init(ll_info2i(lli));
 }
 
 #define MAX_STRING_SIZE 128

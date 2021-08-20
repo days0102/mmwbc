@@ -2238,8 +2238,8 @@ static int mdt_rmfid_unlink(struct mdt_thread_info *info,
 	struct ldlm_enqueue_info *einfo = &info->mti_einfo[0];
 	struct mdt_device *mdt = info->mti_mdt;
 	struct md_attr *ma = &info->mti_attr;
-	struct mdt_lock_handle *parent_lh;
-	struct mdt_lock_handle *child_lh;
+	struct mdt_lock_handle *parent_lh = NULL;
+	struct mdt_lock_handle *child_lh = NULL;
 	struct mdt_object *pobj;
 	bool cos_incompat = false;
 	int rc;
@@ -2249,11 +2249,14 @@ static int mdt_rmfid_unlink(struct mdt_thread_info *info,
 	if (IS_ERR(pobj))
 		GOTO(out, rc = PTR_ERR(pobj));
 
-	parent_lh = &info->mti_lh[MDT_LH_PARENT];
-	mdt_lock_pdo_init(parent_lh, LCK_PW, name);
-	rc = mdt_object_lock(info, pobj, parent_lh, MDS_INODELOCK_UPDATE);
-	if (rc != 0)
-		GOTO(put_parent, rc);
+	if (!info->mti_parent_locked) {
+		parent_lh = &info->mti_lh[MDT_LH_PARENT];
+		mdt_lock_pdo_init(parent_lh, LCK_PW, name);
+		rc = mdt_object_lock(info, pobj, parent_lh,
+				     MDS_INODELOCK_UPDATE);
+		if (rc != 0)
+			GOTO(put_parent, rc);
+	}
 
 	if (mdt_object_remote(pobj))
 		cos_incompat = true;
@@ -2266,13 +2269,16 @@ static int mdt_rmfid_unlink(struct mdt_thread_info *info,
 	if (!lu_fid_eq(child_fid, mdt_object_fid(obj)))
 		GOTO(unlock_parent, rc = -EREMCHG);
 
-	child_lh = &info->mti_lh[MDT_LH_CHILD];
-	mdt_lock_reg_init(child_lh, LCK_EX);
-	rc = mdt_reint_striped_lock(info, obj, child_lh,
-				    MDS_INODELOCK_LOOKUP | MDS_INODELOCK_UPDATE,
-				    einfo, cos_incompat);
-	if (rc != 0)
-		GOTO(unlock_parent, rc);
+	if (!info->mti_parent_locked) {
+		child_lh = &info->mti_lh[MDT_LH_CHILD];
+		mdt_lock_reg_init(child_lh, LCK_EX);
+		rc = mdt_reint_striped_lock(info, obj, child_lh,
+					    MDS_INODELOCK_LOOKUP |
+					    MDS_INODELOCK_UPDATE,
+					    einfo, cos_incompat);
+		if (rc != 0)
+			GOTO(unlock_parent, rc);
+	}
 
 	if (atomic_read(&obj->mot_open_count)) {
 		CDEBUG(D_OTHER, "object "DFID" open, skip\n",
@@ -2293,9 +2299,11 @@ static int mdt_rmfid_unlink(struct mdt_thread_info *info,
 	mutex_unlock(&obj->mot_lov_mutex);
 
 unlock_child:
-	mdt_reint_striped_unlock(info, obj, child_lh, einfo, 1);
+	if (!info->mti_parent_locked) {
+		mdt_reint_striped_unlock(info, obj, child_lh, einfo, 1);
 unlock_parent:
-	mdt_object_unlock(info, pobj, parent_lh, 1);
+		mdt_object_unlock(info, pobj, parent_lh, 1);
+	}
 put_parent:
 	mdt_object_put(info->mti_env, pobj);
 out:
@@ -2411,6 +2419,9 @@ static int mdt_rmfid(struct tgt_session_info *tsi)
 	reqbody = req_capsule_client_get(tsi->tsi_pill, &RMF_MDT_BODY);
 	if (reqbody == NULL)
 		RETURN(-EPROTO);
+
+	mti->mti_parent_locked = !!(reqbody->mbo_valid & OBD_MD_FLFLAGS &&
+				    reqbody->mbo_flags & OBD_FL_LOCKLESS);
 	bufsize = req_capsule_get_size(tsi->tsi_pill, &RMF_FID_ARRAY,
 				       RCL_CLIENT);
 	nr = bufsize / sizeof(struct lu_fid);

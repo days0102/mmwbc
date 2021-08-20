@@ -1302,7 +1302,7 @@ int ll_rmfid(struct file *file, void __user *arg)
 		GOTO(free_rcs, rc = -EFAULT);
 
 	/* Call mdc_iocontrol */
-	rc = md_rmfid(ll_i2mdexp(file_inode(file)), lfa, rcs, NULL);
+	rc = md_rmfid(ll_i2mdexp(file_inode(file)), lfa, rcs, 0, NULL);
 	if (!rc) {
 		for (i = 0; i < nr; i++)
 			if (rcs[i])

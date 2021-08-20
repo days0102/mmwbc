@@ -2589,7 +2589,7 @@ int mdc_rmfid_interpret(const struct lu_env *env, struct ptlrpc_request *req,
 }
 
 static int mdc_rmfid(struct obd_export *exp, struct fid_array *fa,
-		     int *rcs, struct ptlrpc_request_set *set)
+		     int *rcs, __u64 flags, struct ptlrpc_request_set *set)
 {
 	struct ptlrpc_request *req;
 	struct mdc_rmfid_args *aa;
@@ -2620,6 +2620,11 @@ static int mdc_rmfid(struct obd_export *exp, struct fid_array *fa,
 	mdc_pack_body(&req->rq_pill, NULL, 0, 0, -1, 0);
 	b = req_capsule_client_get(&req->rq_pill, &RMF_MDT_BODY);
 	b->mbo_ctime = ktime_get_real_seconds();
+
+	if (flags & (OBD_FL_LOCKLESS | OBD_FL_RM_SUBTREE)) {
+		b->mbo_valid |= OBD_MD_FLFLAGS;
+		b->mbo_flags |= flags;
+	}
 
 	ptlrpc_request_set_replen(req);
 

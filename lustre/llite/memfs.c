@@ -282,6 +282,59 @@ void wbc_inode_unacct_pages(struct inode *inode, long nr_pages)
 	EXIT;
 }
 
+static void wbc_free_removed_list(struct list_head *list)
+{
+	struct wbc_removed_item *item, *tmp;
+
+	list_for_each_entry_safe(item, tmp, list, wbvi_item) {
+		list_del_init(&item->wbvi_item);
+		OBD_FREE_PTR(item);
+	}
+}
+
+/*
+ * Add a removing entry into the removed list of its parent.
+ * \retval	1 if insertion succeeds.
+ * \retval	2 if its parent contains too many removed items, need to sync.
+ * \retval	negative errno if insertion fails.
+ */
+static int wbc_add_removed_item(struct inode *dir, struct dentry *dchild,
+				enum wbc_remove_policy pol)
+{
+	struct inode *inode = dchild->d_inode;
+	struct wbc_inode *dwbci = ll_i2wbci(dir);
+	struct wbc_removed_item *item;
+	LIST_HEAD(head);
+
+	ENTRY;
+
+	OBD_ALLOC_PTR(item);
+	if (item == NULL)
+		RETURN(-ENOMEM);
+
+	INIT_LIST_HEAD(&item->wbvi_item);
+	item->wbvi_fid = *ll_inode2fid(inode);
+	spin_lock(&dwbci->wbci_removed_lock);
+	if (S_ISDIR(inode->i_mode)) {
+		struct wbc_inode *wbci = ll_i2wbci(inode);
+
+		if (pol == WBC_RMPOL_DELAY) {
+			list_splice_tail_init(&wbci->wbci_removed_list,
+					      &dwbci->wbci_removed_list);
+			dwbci->wbci_removed_count += wbci->wbci_removed_count;
+		} else if (pol == WBC_RMPOL_SUBTREE) {
+			list_splice_init(&wbci->wbci_removed_list, &head);
+		}
+	}
+	list_add_tail(&item->wbvi_item, &dwbci->wbci_removed_list);
+	dwbci->wbci_removed_count++;
+	spin_unlock(&dwbci->wbci_removed_lock);
+
+	if (!list_empty(&head))
+		wbc_free_removed_list(&head);
+	RETURN(1);
+}
+
 static struct dentry *memfs_lookup_nd(struct inode *parent,
 				      struct dentry *dentry, unsigned int flags)
 {
@@ -367,6 +420,10 @@ static int memfs_remove_policy(struct inode *dir, struct dentry *dchild,
 	case WBC_RMPOL_SYNC:
 		RETURN(rmdir ? ll_dir_inode_operations.rmdir(dir, dchild) :
 			       ll_dir_inode_operations.unlink(dir, dchild));
+	case WBC_RMPOL_DELAY:
+		RETURN(wbc_add_removed_item(dir, dchild, WBC_RMPOL_DELAY));
+	case WBC_RMPOL_SUBTREE:
+		RETURN(-EOPNOTSUPP);
 	default:
 		RETURN(0);
 	}
@@ -395,7 +452,7 @@ static int memfs_rmdir(struct inode *dir, struct dentry *dchild)
 	down_read(&wbci->wbci_rw_sem);
 	if (wbc_inode_complete(wbci)) {
 		rc = memfs_remove_policy(dir, dchild, true);
-		if (rc)
+		if (rc < 0)
 			GOTO(up_rwsem, rc);
 
 		/* copy from simple_rmdir() */
@@ -403,6 +460,13 @@ static int memfs_rmdir(struct inode *dir, struct dentry *dchild)
 		drop_nlink(dir);
 
 		memfs_remove_from_dcache(dir, dchild);
+		if (rc == 1) {
+			spin_lock(&dir->i_lock);
+			wbci->wbci_dirty_flags |= WBC_DIRTY_FL_REMOVE;
+			spin_unlock(&dir->i_lock);
+			mark_inode_dirty(dir);
+			rc = 0;
+		}
 	} else {
 		LASSERT(wbc_inode_written_out(wbci));
 		rc = ll_dir_inode_operations.rmdir(dir, dchild);
@@ -428,12 +492,25 @@ static int memfs_unlink(struct inode *dir, struct dentry *dchild)
 	down_read(&wbci->wbci_rw_sem);
 	if (wbc_inode_complete(wbci)) {
 		rc = memfs_remove_policy(dir, dchild, false);
-		if (rc)
+		if (rc < 0)
 			GOTO(up_rwsem, rc);
 
 		/* copy from simple_unlink() */
 		memfs_remove_from_dcache(dir, dchild);
 		wbc_inode_data_lru_del(dchild->d_inode);
+		/*
+		 * @dchild is only removed from MemFS although it has already
+		 * (F)lushed to MDT.
+		 * Here the @dir is marked as dirty, thus the pending removed
+		 * will be synchnorized to MDT later when flush the @dir.
+		 */
+		if (rc == 1) {
+			spin_lock(&dir->i_lock);
+			wbci->wbci_dirty_flags |= WBC_DIRTY_FL_REMOVE;
+			spin_unlock(&dir->i_lock);
+			mark_inode_dirty(dir);
+			rc = 0;
+		}
 	} else {
 		rc = ll_dir_inode_operations.unlink(dir, dchild);
 		if (rc)

@@ -971,6 +971,7 @@ enum md_opcode {
 	MD_OP_SETATTR_LOCKLESS	= 4,
 	MD_OP_SETATTR_EXLOCK	= 5,
 	MD_OP_EXLOCK_ONLY	= 6,
+	MD_OP_REMOVE_LOCKLESS	= 7,
 	MD_OP_MAX,
 };
 
@@ -1261,7 +1262,7 @@ struct md_ops {
 	int (*m_unpackmd)(struct obd_export *exp, struct lmv_stripe_md **plsm,
 			  const union lmv_mds_md *lmv, size_t lmv_size);
 	int (*m_rmfid)(struct obd_export *exp, struct fid_array *fa, int *rcs,
-		       struct ptlrpc_request_set *set);
+		       __u64 flags, struct ptlrpc_request_set *set);
 	struct lu_batch *(*m_batch_create)(struct obd_export *exp,
 					   enum lu_batch_flags flags,
 					   __u32 max_count);

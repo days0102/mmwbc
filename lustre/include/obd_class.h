@@ -1830,7 +1830,8 @@ static inline int md_unpackmd(struct obd_export *exp,
 }
 
 static inline int md_rmfid(struct obd_export *exp, struct fid_array *fa,
-			   int *rcs, struct ptlrpc_request_set *set)
+			   int *rcs, __u64 flags,
+			   struct ptlrpc_request_set *set)
 {
 	int rc;
 
@@ -1838,7 +1839,7 @@ static inline int md_rmfid(struct obd_export *exp, struct fid_array *fa,
 	if (rc)
 		return rc;
 
-	return MDP(exp->exp_obd, rmfid)(exp, fa, rcs, set);
+	return MDP(exp->exp_obd, rmfid)(exp, fa, rcs, flags, set);
 }
 
 static inline struct lu_batch *

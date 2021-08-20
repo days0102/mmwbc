@@ -957,6 +957,76 @@ static int wbc_do_create(struct inode *inode)
 	RETURN(rc);
 }
 
+/* TODO: if @valid != 0, still need to set attributes for the file. */
+static int wbc_do_rmfid(struct inode *dir, unsigned int valid)
+{
+	__u32 max = ll_i2wbcc(dir)->wbcc_max_rmfid_count;
+	struct wbc_inode *wbci = ll_i2wbci(dir);
+	struct wbc_removed_item *item, *tmp;
+	struct fid_array *fa = NULL;
+	int *rcs = NULL;
+	LIST_HEAD(head);
+	unsigned int nr;
+	__u32 total = 0;
+	__u32 count;
+	size_t size;
+	int rc;
+
+	ENTRY;
+
+	spin_lock(&wbci->wbci_removed_lock);
+	count = wbci->wbci_removed_count;
+	wbci->wbci_removed_count = 0;
+	list_splice_init(&wbci->wbci_removed_list, &head);
+	spin_unlock(&wbci->wbci_removed_lock);
+
+	nr = min_t(__u32, max, count);
+	size = offsetof(struct fid_array, fa_fids[nr]);
+	OBD_ALLOC(fa, size);
+	if (!fa)
+		RETURN(-ENOMEM);
+	OBD_ALLOC_PTR_ARRAY(rcs, nr);
+	if (!rcs)
+		GOTO(free_fa, rc = -ENOMEM);
+
+	list_for_each_entry_safe(item, tmp, &head, wbvi_item) {
+		list_del_init(&item->wbvi_item);
+		fa->fa_fids[fa->fa_nr] = item->wbvi_fid;
+		fa->fa_nr++;
+		total++;
+		OBD_FREE_PTR(item);
+		if (fa->fa_nr == max) {
+			rc = md_rmfid(ll_i2mdexp(dir), fa, rcs,
+				      OBD_FL_LOCKLESS, NULL);
+			if (rc)
+				GOTO(free_rcs, rc);
+			fa->fa_nr = 0;
+		}
+	}
+
+	LASSERT(total == count);
+	if (fa->fa_nr)
+		rc = md_rmfid(ll_i2mdexp(dir), fa, rcs, OBD_FL_LOCKLESS, NULL);
+
+free_rcs:
+	OBD_FREE_PTR_ARRAY(rcs, nr);
+free_fa:
+	OBD_FREE(fa, size);
+	RETURN(rc);
+}
+
+int wbcfs_inode_sync_metadata(long opc, struct inode *inode, unsigned int valid)
+{
+	switch (opc) {
+	case MD_OP_SETATTR_LOCKLESS:
+		RETURN(wbc_do_setattr(inode, valid));
+	case MD_OP_REMOVE_LOCKLESS:
+		RETURN(wbc_do_rmfid(inode, valid));
+	default:
+		RETURN(-EOPNOTSUPP);
+	}
+}
+
 int wbcfs_setattr_data_object(struct inode *inode, struct iattr *attr)
 {
 	struct wbc_inode *wbci = ll_i2wbci(inode);
@@ -1290,6 +1360,16 @@ int wbcfs_inode_flush_lockless(struct inode *inode,
 		break;
 	case MD_OP_SETATTR_LOCKLESS: {
 		rc = wbc_do_setattr(inode, valid);
+		spin_lock(&inode->i_lock);
+		LASSERT(wbci->wbci_flags & WBC_STATE_FL_WRITEBACK &&
+			wbci->wbci_dirty_flags & WBC_DIRTY_FL_FLUSHING);
+		wbci->wbci_dirty_flags &= ~WBC_DIRTY_FL_FLUSHING;
+		spin_unlock(&inode->i_lock);
+		wbc_inode_writeback_complete(inode);
+		break;
+	}
+	case MD_OP_REMOVE_LOCKLESS: {
+		rc = wbc_do_rmfid(inode, valid);
 		spin_lock(&inode->i_lock);
 		LASSERT(wbci->wbci_flags & WBC_STATE_FL_WRITEBACK &&
 			wbci->wbci_dirty_flags & WBC_DIRTY_FL_FLUSHING);

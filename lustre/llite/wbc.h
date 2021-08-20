@@ -48,6 +48,8 @@
 enum wbc_remove_policy {
 	WBC_RMPOL_NONE,
 	WBC_RMPOL_SYNC,
+	WBC_RMPOL_DELAY,
+	WBC_RMPOL_SUBTREE,
 	WBC_RMPOL_DEFAULT = WBC_RMPOL_SYNC,
 };
 
@@ -153,6 +155,7 @@ struct wbc_conf {
 	 * storage (Lustre OSTs or PCC).
 	 */
 	unsigned long		wbcc_max_nrpages_per_file;
+	__u32			wbcc_max_rmfid_count;
 	__u32			wbcc_background_async_rpc:1;
 	/* How many inodes are allowed. */
 	unsigned long		wbcc_max_inodes;
@@ -274,10 +277,13 @@ struct writeback_control_ext {
 #endif
 };
 
+struct wbc_removed_item {
+	struct lu_fid		wbvi_fid;
+	struct list_head	wbvi_item;
+};
+
 struct wbc_inode {
 	__u32			wbci_flags;
-	/* Archive ID of PCC backend to store Data on PCC (DOP) */
-	__u32			wbci_archive_id;
 	/*
 	 * Cache mode and flush mode should be a command information shared
 	 * by the whole subtree under the root WBC directory.
@@ -291,6 +297,21 @@ struct wbc_inode {
 	struct list_head	wbci_data_lru;
 	struct lustre_handle	wbci_lock_handle;
 	struct rw_semaphore	wbci_rw_sem;
+
+	union {
+		/* for directory */
+		struct {
+			__u32			wbci_removed_count;
+			spinlock_t		wbci_removed_lock;
+			struct list_head	wbci_removed_list;
+			enum wbc_remove_policy	wbci_rmpol;
+		};
+		/* for regular file */
+		struct {
+			/* Archive ID of PCC backend to store Data on PCC. */
+			__u32			wbci_archive_id;
+		};
+	};
 };
 
 struct wbc_dentry {
@@ -328,6 +349,7 @@ enum wbc_cmd_op {
 	WBC_CMD_OP_MAX_BATCH_COUNT	= 0x0200,
 	WBC_CMD_OP_MAX_QLEN		= 0x0400,
 	WBC_CMD_OP_MAX_NRPAGES_PER_FILE	= 0x0800,
+	WBC_CMD_OP_MAX_RMFID_COUNT	= 0x1000,
 };
 
 struct wbc_cmd {
@@ -448,6 +470,11 @@ static inline bool wbc_inode_attr_dirty(struct wbc_inode *wbci)
 	return wbci->wbci_dirty_flags & WBC_DIRTY_FL_ATTR;
 }
 
+static inline bool wbc_inode_remove_dirty(struct wbc_inode *wbci)
+{
+	return wbci->wbci_dirty_flags & WBC_DIRTY_FL_REMOVE;
+}
+
 static inline bool wbc_decomplete_lock_keep(struct wbc_inode *wbci,
 					    struct writeback_control_ext *wbcx)
 {
@@ -475,6 +502,10 @@ static inline const char *wbc_rmpol2string(enum wbc_remove_policy pol)
 	switch (pol) {
 	case WBC_RMPOL_SYNC:
 		return "sync";
+	case WBC_RMPOL_DELAY:
+		return "delay";
+	case WBC_RMPOL_SUBTREE:
+		return "subtree";
 	default:
 		return "unknow";
 	}
@@ -549,7 +580,7 @@ int wbc_make_dir_decomplete(struct inode *dir, struct dentry *parent,
 int wbc_make_data_commit(struct dentry *dentry);
 int wbc_super_init(struct wbc_super *super);
 void wbc_super_fini(struct wbc_super *super);
-void wbc_inode_init(struct wbc_inode *wbci);
+void wbc_inode_init(struct inode *inode);
 void wbc_dentry_init(struct dentry *dentry);
 int wbc_cmd_handle(struct wbc_super *super, struct wbc_cmd *cmd);
 int wbc_cmd_parse_and_handle(char *buffer, unsigned long count,
@@ -563,8 +594,6 @@ void wbc_inode_unacct_pages(struct inode *inode, long nr_pages);
 /* llite_wbc.c */
 void wbcfs_inode_operations_switch(struct inode *inode);
 int wbcfs_d_init(struct dentry *de);
-int wbc_do_setattr(struct inode *inode, unsigned int valid);
-int wbc_do_remove(struct inode *dir, struct dentry *dchild, bool rmdir);
 int wbcfs_commit_cache_pages(struct inode *inode);
 int wbcfs_inode_flush_lockless(struct inode *inode,
 			       struct writeback_control_ext *wbcx);
@@ -580,6 +609,8 @@ int wbcfs_file_open_local(struct inode *inode, struct file *file);
 void wbcfs_file_release_local(struct inode *inode, struct file *file);
 int wbcfs_dcache_dir_open(struct inode *inode, struct file *file);
 int wbcfs_dcache_dir_close(struct inode *inode, struct file *file);
+int wbcfs_inode_sync_metadata(long opc, struct inode *inode,
+			      unsigned int valid);
 int wbcfs_setattr_data_object(struct inode *inode, struct iattr *attr);
 void wbc_free_inode_pages_final(struct inode *inode,
 				struct address_space *mapping);

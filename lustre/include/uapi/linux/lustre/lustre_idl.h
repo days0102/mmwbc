@@ -1104,6 +1104,8 @@ enum obdo_flags {
         OBD_FL_NOSPC_BLK    = 0x00100000, /* no more block space on OST */
 	OBD_FL_FLUSH	    = 0x00200000, /* flush pages on the OST */
 	OBD_FL_SHORT_IO	    = 0x00400000, /* short io request */
+	OBD_FL_LOCKLESS	    = 0x00800000, /* lockless metadata I/O operation */
+	OBD_FL_RM_SUBTREE   = 0x01000000, /* subtree remove policy */
 	/* OBD_FL_LOCAL_MASK = 0xF0000000, was local-only flags until 2.10 */
 
 	/*

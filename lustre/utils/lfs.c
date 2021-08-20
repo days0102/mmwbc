@@ -12307,6 +12307,8 @@ static int lfs_wbc_state(int argc, char **argv)
 			printf(" data");
 		if (state.wbcs_dirty_flags & WBC_DIRTY_FL_HARDLINK)
 			printf(" hardlink");
+		if (state.wbcs_dirty_flags & WBC_DIRTY_FL_REMOVE)
+			printf(" remove");
 		if (state.wbcs_dirty_flags & WBC_DIRTY_FL_FLUSHING)
 			printf(" flushing");
 		if (state.wbcs_dirty_flags == WBC_DIRTY_FL_UPTODATE)

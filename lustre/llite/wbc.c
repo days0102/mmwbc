@@ -354,7 +354,12 @@ long wbc_flush_opcode_get(struct inode *inode, struct dentry *dchild,
 			opc = MD_OP_NONE;
 			if (wbcx->unrsv_children_decomp)
 				wbc_inode_unreserve_dput(inode, dchild);
-		} else if (wbc_inode_attr_dirty(wbci)) {
+		} else if (wbc_inode_remove_dirty(wbci)) {
+			LASSERT(S_ISDIR(inode->i_mode));
+			LASSERT(wbc_mode_lock_keep(wbci));
+			wbc_clear_dirty_for_flush(wbci, valid);
+			opc = MD_OP_REMOVE_LOCKLESS;
+		}else if (wbc_inode_attr_dirty(wbci)) {
 			wbc_clear_dirty_for_flush(wbci, valid);
 			opc = wbc_flush_need_exlock(wbci, wbcx) ?
 			      MD_OP_SETATTR_EXLOCK : MD_OP_SETATTR_LOCKLESS;
@@ -482,8 +487,8 @@ static int wbc_inode_update_metadata(struct inode *inode,
 				     struct writeback_control_ext *wbcx)
 {
 	struct wbc_inode *wbci = ll_i2wbci(inode);
+	unsigned int valid = 0;
 	long opc = MD_OP_NONE;
-	unsigned int valid;
 	int rc = 0;
 
 	ENTRY;
@@ -491,10 +496,14 @@ static int wbc_inode_update_metadata(struct inode *inode,
 	LASSERT(wbc_inode_was_flushed(wbci));
 
 	spin_lock(&inode->i_lock);
-	if (wbc_inode_attr_dirty(wbci)) {
-		valid = wbci->wbci_dirty_attr;
-		wbci->wbci_dirty_flags = WBC_DIRTY_FL_FLUSHING;
-		wbci->wbci_dirty_attr = 0;
+	/* TODO: hanlde for unsynchornized removed sub files. */
+	if (wbc_inode_remove_dirty(wbci)) {
+		LASSERT(S_ISDIR(inode->i_mode));
+		LASSERT(wbc_mode_lock_keep(wbci));
+		wbc_clear_dirty_for_flush(wbci, &valid);
+		opc = MD_OP_REMOVE_LOCKLESS;
+	} else if (wbc_inode_attr_dirty(wbci)) {
+		wbc_clear_dirty_for_flush(wbci, &valid);
 		opc = MD_OP_SETATTR_LOCKLESS;
 	}
 	/* TODO: hardlink. */
@@ -507,9 +516,7 @@ static int wbc_inode_update_metadata(struct inode *inode,
 	 * permission check for newly file creation under the protection of an
 	 * WBC EX lock.
 	 */
-	if (opc == MD_OP_SETATTR_LOCKLESS)
-		rc = wbc_do_setattr(inode, valid);
-
+	rc = wbcfs_inode_sync_metadata(opc, inode, valid);
 	RETURN(rc);
 }
 
@@ -927,14 +934,22 @@ static int wbc_inode_flush_lockdrop(struct inode *inode,
 	return rc;
 }
 
-void wbc_inode_init(struct wbc_inode *wbci)
+void wbc_inode_init(struct inode *inode)
 {
+	struct wbc_inode *wbci = ll_i2wbci(inode);
+
 	wbci->wbci_flags = WBC_STATE_FL_NONE;
 	wbci->wbci_dirty_flags = WBC_DIRTY_FL_NONE;
 	INIT_LIST_HEAD(&wbci->wbci_root_list);
 	INIT_LIST_HEAD(&wbci->wbci_rsvd_lru);
 	INIT_LIST_HEAD(&wbci->wbci_data_lru);
 	init_rwsem(&wbci->wbci_rw_sem);
+
+	if (S_ISDIR(inode->i_mode)) {
+		spin_lock_init(&wbci->wbci_removed_lock);
+		INIT_LIST_HEAD(&wbci->wbci_removed_list);
+		wbci->wbci_rmpol = ll_i2wbcc(inode)->wbcc_rmpol;
+	}
 }
 
 void wbc_dentry_init(struct dentry *dentry)
@@ -1195,6 +1210,7 @@ static void wbc_super_reset_common_conf(struct wbc_conf *conf)
 	conf->wbcc_max_rpcs = WBC_DEFAULT_MAX_RPCS;
 	conf->wbcc_max_qlen = WBC_DEFAULT_MAX_QLEN;
 	conf->wbcc_max_nrpages_per_file = WBC_DEFAULT_MAX_NRPAGES_PER_FILE;
+	conf->wbcc_max_rmfid_count = OBD_MAX_FIDS_IN_ARRAY;
 	conf->wbcc_background_async_rpc = 0;
 	conf->wbcc_max_inodes = 0;
 	conf->wbcc_free_inodes = 0;
@@ -1235,6 +1251,7 @@ static void wbc_super_conf_default(struct wbc_conf *conf)
 	conf->wbcc_max_rpcs = WBC_DEFAULT_MAX_RPCS;
 	conf->wbcc_max_qlen = WBC_DEFAULT_MAX_QLEN;
 	conf->wbcc_max_nrpages_per_file = WBC_DEFAULT_MAX_NRPAGES_PER_FILE;
+	conf->wbcc_max_rmfid_count = OBD_MAX_FIDS_IN_ARRAY;
 }
 
 static int wbc_super_conf_update(struct wbc_conf *conf, struct wbc_cmd *cmd)
@@ -1283,6 +1300,9 @@ static int wbc_super_conf_update(struct wbc_conf *conf, struct wbc_cmd *cmd)
 	if (cmd->wbcc_flags & WBC_CMD_OP_MAX_NRPAGES_PER_FILE)
 		conf->wbcc_max_nrpages_per_file =
 			cmd->wbcc_conf.wbcc_max_nrpages_per_file;
+	if (cmd->wbcc_flags & WBC_CMD_OP_MAX_RMFID_COUNT)
+		conf->wbcc_max_rmfid_count =
+			cmd->wbcc_conf.wbcc_max_rmfid_count;
 	if (cmd->wbcc_flags & WBC_CMD_OP_RMPOL)
 		conf->wbcc_rmpol = cmd->wbcc_conf.wbcc_rmpol;
 	if (cmd->wbcc_flags & WBC_CMD_OP_READDIR_POL)
@@ -1407,9 +1427,20 @@ static int wbc_parse_value_pair(struct wbc_cmd *cmd, char *buffer)
 
 		conf->wbcc_max_nrpages_per_file = num;
 		cmd->wbcc_flags |= WBC_CMD_OP_MAX_NRPAGES_PER_FILE;
+	} else if (strcmp(key, "max_rmfid_count") == 0) {
+		rc = kstrtoul(val, 10, &num);
+		if (rc)
+			return rc;
+
+		conf->wbcc_max_rmfid_count = num;
+		cmd->wbcc_flags |= WBC_CMD_OP_MAX_RMFID_COUNT;
 	} else if (strcmp(key, "rmpol") == 0) {
 		if (strcmp(val, "sync") == 0)
 			conf->wbcc_rmpol = WBC_RMPOL_SYNC;
+		else if (strcmp(val, "delay") == 0)
+			conf->wbcc_rmpol = WBC_RMPOL_DELAY;
+		else if (strcmp(val, "subtree") == 0)
+			conf->wbcc_rmpol = WBC_RMPOL_SUBTREE;
 		else
 			return -EINVAL;
 

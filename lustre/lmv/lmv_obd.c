@@ -3042,7 +3042,7 @@ static int lmv_get_info(const struct lu_env *env, struct obd_export *exp,
 }
 
 static int lmv_rmfid(struct obd_export *exp, struct fid_array *fa,
-		     int *__rcs, struct ptlrpc_request_set *_set)
+		     int *__rcs, __u64 flags, struct ptlrpc_request_set *_set)
 {
 	struct obd_device *obd = class_exp2obd(exp);
 	struct ptlrpc_request_set *set = _set;
@@ -3094,7 +3094,8 @@ static int lmv_rmfid(struct obd_export *exp, struct fid_array *fa,
 		fat = fas[tgt->ltd_index];
 		if (!fat || fat->fa_nr == 0)
 			continue;
-		rc = md_rmfid(tgt->ltd_exp, fat, rcs[tgt->ltd_index], set);
+		rc = md_rmfid(tgt->ltd_exp, fat,
+			      rcs[tgt->ltd_index], flags, set);
 	}
 
 	rc = ptlrpc_set_wait(NULL, set);

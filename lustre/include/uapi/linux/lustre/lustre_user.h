@@ -2876,6 +2876,8 @@ enum lu_wbc_dirty_flags {
 	 * by MemFS.
 	 */
 	WBC_DIRTY_FL_DATA	= 0x10,
+	/* The directory contains unsynchronized removed sub files. */
+	WBC_DIRTY_FL_REMOVE	= 0x20,
 };
 
 struct lu_wbc_state {

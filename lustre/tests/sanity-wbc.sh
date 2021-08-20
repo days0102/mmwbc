@@ -212,7 +212,7 @@ check_wbc_inode_complete() {
 wait_wbc_uptodate() {
 	local file=$1
 	local client=${2:-$HOSTNAME}
-	local uptodate="$LFS wbc state $file"
+	local cmd="$LFS wbc state $file"
 
 	cmd+=" | grep -E -c 'state: .*(none|uptodate)'"
 
@@ -1978,6 +1978,86 @@ test_31() {
 
 }
 run_test 31 "DOP for aging_keep flush mode"
+
+test_32() {
+	local dir=$DIR/$tdir
+	local nr=3
+	local fileset
+	local mdtset
+
+	systctl -w vm.dirty_expire_centisecs=500
+	sysctl -w vm.dirty_writeback_centisecs=400
+	setup_wbc "flush_mode=aging_keep rmpol=delay"
+
+	for i in $(seq 1 $nr); do
+		fileset+="$dir/$tfile.$i "
+		mdtset+="$tdir/$tfile.$i "
+	done
+
+	mkdir $dir || error "mkdir $dir failed"
+	touch $fileset || error "touch $fileset failed"
+
+	$LFS wbc state $fileset
+	sync
+	check_mdt_fileset_exist "$mdtset" 0 ||
+		error "'$fileset' should exist under ROOT on MDT"
+	$LFS wbc state $fileset
+	rm -f $fileset || error "rm -f $fileset failed"
+	$LFS wbc state $dir || error "$LFS wbc state $dir failed"
+	check_mdt_fileset_exist "$mdtset" 0 ||
+		error "'$fileset' should exist under ROOT on MDT"
+	sleep 7
+	wait_wbc_uptodate $dir
+	$LFS wbc state $dir || error "$LFS wbc state $dir failed"
+	check_mdt_fileset_exist "$mdtset" 1 ||
+		error "'$fileset' should not exist under ROOT on MDT"
+}
+run_test 32 "Delay asynchronous file removal by FID for aging keep flush mode"
+
+test_33() {
+	local flush_mode="aging_keep"
+	local level=2
+	local nr_level=3
+	local root=$DIR/$tdir
+	local path="$DIR/$tdir"
+	local fpath="$tdir"
+	local fileset
+	local mdtset
+	local file
+
+
+	echo "level: $level files_per_level: $nr_level"
+	setup_wbc "flush_mode=$flush_mode rmpol=delay"
+
+	mkdir $DIR/$tdir || error "mkdir $DIR/$tdir failed"
+	for l in $(seq 1 $level); do
+		for i in $(seq 1 $nr_level); do
+			fileset+="$path/dir_l$l.i$i "
+			mdtset+="$fpath/dir_l$l.i$i "
+		done
+		path+="/dir_l$l.i1"
+		fpath+="/dir_l$l.i1"
+		flushset+="$path "
+		mdtset+="$fpath "
+	done
+
+	mkdir $fileset || error "mkdir $fileset failed"
+	$LFS wbc state $root $fileset
+	sync
+	check_mdt_fileset_exist "$mdtset" 0 ||
+		error "'$mdtset' should exist on MDT"
+	rm -rf $root/* || error "rm -rf $root/* failed"
+	echo "Listing $root ..."
+	ls $root | wc -l
+	$LFS wbc state $root || error "$LFS wbc state $root failed"
+	check_mdt_fileset_exist "$mdtset" 0 ||
+		error "'$mdtset' should exist on MDT"
+	stat $DIR2/$tdir || error "stat $DIR2/$tdir failed"
+	$LFS wbc state $root || error "$LFS wbc state $root failed"
+	check_mdt_fileset_exist "$mdtset" 1 ||
+		error "'$mdtset' should remove from MDT"
+}
+run_test 33 "Delay asynchronous removal with multiple levels"
 
 test_100() {
 	local dir=$DIR/$tdir
