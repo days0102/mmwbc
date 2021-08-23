@@ -1022,6 +1022,8 @@ int wbcfs_inode_sync_metadata(long opc, struct inode *inode, unsigned int valid)
 		RETURN(wbc_do_setattr(inode, valid));
 	case MD_OP_REMOVE_LOCKLESS:
 		RETURN(wbc_do_rmfid(inode, valid));
+	case MD_OP_NONE:
+		RETURN(0);
 	default:
 		RETURN(-EOPNOTSUPP);
 	}
@@ -1752,8 +1754,7 @@ void wbc_intent_inode_init(struct inode *dir, struct inode *inode,
  * here to set the cache mode and flush mode for the newly created directory.
  */
 bool wbc_may_exclusive_cache(struct inode *dir, struct dentry *dentry,
-			     umode_t mode, __u64 *extra_lock_flags,
-			     struct md_op_data *op_data)
+			     umode_t mode, __u64 *extra_lock_flags)
 {
 	struct wbc_conf *conf = &ll_i2wbcs(dir)->wbcs_conf;
 	struct wbc_inode *wbci = ll_i2wbci(dir);
@@ -1766,7 +1767,6 @@ bool wbc_may_exclusive_cache(struct inode *dir, struct dentry *dentry,
 	if (wbc_inode_has_protected(wbci)) {
 		LASSERT(!wbc_inode_complete(wbci));
 		*extra_lock_flags = LDLM_FL_INTENT_PARENT_LOCKED;
-		op_data->op_bias |= MDS_WBC_LOCKLESS;
 	} else {
 		LASSERT(wbc_inode_none(wbci));
 		*extra_lock_flags = LDLM_FL_INTENT_EXLOCK_UPDATE;

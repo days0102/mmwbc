@@ -1708,6 +1708,20 @@ static int ll_mkdir(struct inode *dir, struct dentry *dchild, umode_t mode)
 	if (!IS_POSIXACL(dir) || !exp_connect_umask(ll_i2mdexp(dir)))
 		mode &= ~current_umask();
 
+	/*
+	 * TODO: If not want the granted WBC EX lock to be canceled due to
+	 * aging, the lock should not be put into the LRU list via the flag
+	 * LDLM_FL_NO_LRU.
+	 */
+	excl_cache = wbc_may_exclusive_cache(dir, dchild, mode,
+					     &extra_lock_flags);
+
+	if (!excl_cache) {
+		mode = (mode & (S_IRWXUGO | S_ISVTX)) | S_IFDIR;
+		rc = ll_new_node(dir, dchild, NULL, mode, 0, LUSTRE_OPC_MKDIR);
+		GOTO(out_stats, rc);
+	}
+
 	mkdir_it.it_create_mode = (mode & (S_IRWXUGO | S_ISVTX)) | S_IFDIR;
 
 	op_data = ll_prep_md_op_data(NULL, dir, NULL, dchild->d_name.name,
@@ -1716,13 +1730,8 @@ static int ll_mkdir(struct inode *dir, struct dentry *dchild, umode_t mode)
 	if (IS_ERR(op_data))
 		RETURN(PTR_ERR(op_data));
 
-	/*
-	 * TODO: If not want the granted WBC EX lock to be canceled due to
-	 * aging, the lock should not be put into the LRU list via the flag
-	 * LDLM_FL_NO_LRU.
-	 */
-	excl_cache = wbc_may_exclusive_cache(dir, dchild, mode,
-					     &extra_lock_flags, op_data);
+	if (extra_lock_flags & LDLM_FL_INTENT_PARENT_LOCKED)
+		op_data->op_bias |= MDS_WBC_LOCKLESS;
 
 	if ((sbi->ll_flags & LL_SBI_FILE_SECCTX) && !excl_cache) {
 		rc = ll_dentry_init_security(dchild, mode, &dchild->d_name,
@@ -1796,7 +1805,7 @@ out_fini:
 	ll_finish_md_op_data(op_data);
 	ll_intent_release(&mkdir_it);
 	ptlrpc_req_finished(request);
-
+out_stats:
 	if (rc == 0)
 		ll_stats_ops_tally(sbi, LPROC_LL_MKDIR,
 				   ktime_us_delta(ktime_get(), kstart));

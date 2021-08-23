@@ -255,6 +255,10 @@ flush_mode_lock_drop() {
 	wbc_conf_show | grep -c -E "flush_mode: (aging|lazy)_drop" &> /dev/null
 }
 
+flush_mode_aging_keep() {
+	wbc_conf_show | grep -c -E "flush_mode: aging_keep" &> /dev/null
+}
+
 get_free_inodes() {
 	wbc_conf_show | grep "inodes_free:" | awk '{print $2}'
 }
@@ -589,6 +593,7 @@ test_6_base() {
 	local dir2="$dir1/dir2"
 	local file3="$dir2/file3"
 	local flags="0x00000000"
+	local regfl="0x00000000"
 	local interval
 	local oldmd5
 	local newmd5
@@ -598,8 +603,11 @@ test_6_base() {
 	echo "dirty_writeback_centisecs: $interval"
 
 	setup_wbc "flush_mode=$flush_mode"
-	wbc_conf_show | grep "flush_mode: aging_keep" &&
+	if flush_mode_aging_keep; then
 		flags="0x00000017"
+		regfl="0x00000037"
+	fi
+
 	mkdir $DIR/$tdir || error "mkdir $DIR/$tdir failed"
 	mkdir $DIR/$dir1 || error "mkdir $DIR/$dir1 failed"
 	mkdir $DIR/$dir2 || error "mkdir $DIR/$dir2 failed"
@@ -618,7 +626,8 @@ test_6_base() {
 	wait_wbc_sync_state $DIR/$file3
 	$LFS wbc state $DIR/$tdir $DIR/$file1 $DIR/$dir1 $DIR/$file2 \
 		$DIR/$dir2 $DIR/$file3
-	check_fileset_wbc_flags "$fileset" "$flags" $DIR
+	check_fileset_wbc_flags "$dir1 $dir2" "$flags" $DIR
+	check_fileset_wbc_flags "$file1 $file2 $file3" "$regfl" $DIR
 	check_mdt_fileset_exist "$fileset" 0 ||
 		error "'$fileset' should exist on MDT"
 

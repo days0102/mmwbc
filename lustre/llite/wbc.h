@@ -616,8 +616,7 @@ void wbc_free_inode_pages_final(struct inode *inode,
 				struct address_space *mapping);
 
 bool wbc_may_exclusive_cache(struct inode *dir, struct dentry *dchild,
-			     umode_t mode, __u64 *extra_lock_flags,
-			     struct md_op_data *op_data);
+			     umode_t mode, __u64 *extra_lock_flags);
 void wbc_tunables_init(struct super_block *sb);
 void wbc_tunables_fini(struct super_block *sb);
 long wbc_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
