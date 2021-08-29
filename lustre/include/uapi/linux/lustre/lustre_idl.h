@@ -1105,7 +1105,7 @@ enum obdo_flags {
 	OBD_FL_FLUSH	    = 0x00200000, /* flush pages on the OST */
 	OBD_FL_SHORT_IO	    = 0x00400000, /* short io request */
 	OBD_FL_LOCKLESS	    = 0x00800000, /* lockless metadata I/O operation */
-	OBD_FL_RM_SUBTREE   = 0x01000000, /* subtree remove policy */
+	OBD_FL_SUBTREE_RM   = 0x01000000, /* subtree remove policy */
 	/* OBD_FL_LOCAL_MASK = 0xF0000000, was local-only flags until 2.10 */
 
 	/*
@@ -1969,6 +1969,8 @@ enum mds_op_bias {
 	/* setstripe create only, don't restripe if target exists */
 	MDS_SETSTRIPE_CREATE	= 1 << 21,
 	MDS_WBC_LOCKLESS	= 1 << 22,
+	/* subtree removal used for WBC */
+	MDS_SUBTREE_REMOVAL	= 1 << 23,
 };
 
 #define MDS_CLOSE_INTENT (MDS_HSM_RELEASE | MDS_CLOSE_LAYOUT_SWAP |         \

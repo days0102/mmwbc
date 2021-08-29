@@ -2621,7 +2621,7 @@ static int mdc_rmfid(struct obd_export *exp, struct fid_array *fa,
 	b = req_capsule_client_get(&req->rq_pill, &RMF_MDT_BODY);
 	b->mbo_ctime = ktime_get_real_seconds();
 
-	if (flags & (OBD_FL_LOCKLESS | OBD_FL_RM_SUBTREE)) {
+	if (flags & (OBD_FL_LOCKLESS | OBD_FL_SUBTREE_RM)) {
 		b->mbo_valid |= OBD_MD_FLFLAGS;
 		b->mbo_flags |= flags;
 	}

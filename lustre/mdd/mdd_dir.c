@@ -1573,12 +1573,14 @@ int mdd_finish_unlink(const struct lu_env *env,
 int mdd_unlink_sanity_check(const struct lu_env *env, struct mdd_object *pobj,
 			    const struct lu_attr *pattr,
 			    struct mdd_object *cobj,
-			    const struct lu_attr *cattr)
+			    const struct lu_attr *cattr,
+			    int check_empty)
 {
 	int rc;
 	ENTRY;
 
-	rc = mdd_may_delete(env, pobj, pattr, cobj, cattr, NULL, 1, 1);
+	rc = mdd_may_delete(env, pobj, pattr, cobj, cattr,
+			    NULL, 1, check_empty);
 
 	RETURN(rc);
 }
@@ -1671,6 +1673,262 @@ static bool mdd_hsm_archive_exists(const struct lu_env *env,
 	RETURN(false);
 }
 
+static int mdd_unpack_ent(struct lu_dirent *ent, __u16 *type)
+{
+	struct luda_type *lt;
+	int align = sizeof(*lt) - 1;
+	int len;
+
+	fid_le_to_cpu(&ent->lde_fid, &ent->lde_fid);
+	ent->lde_reclen = le16_to_cpu(ent->lde_reclen);
+	ent->lde_namelen = le16_to_cpu(ent->lde_namelen);
+	ent->lde_attrs = le32_to_cpu(ent->lde_attrs);
+
+	if (unlikely(!(ent->lde_attrs & LUDA_TYPE)))
+		return -EINVAL;
+
+	len = (ent->lde_namelen + align) & ~align;
+	lt = (struct luda_type *)(ent->lde_name + len);
+	*type = le16_to_cpu(lt->lt_type);
+
+	/*
+	 * Make sure the name is terminated with '\0'. The data (object type)
+	 * after ent::lde_name maybe broken, but we have stored such data in
+	 * the output parameter @type as above.
+	 */
+	ent->lde_name[ent->lde_namelen] = '\0';
+	return 0;
+}
+
+static int mdd_tree_remove_one(const struct lu_env *env, struct mdd_device *mdd,
+			       struct mdd_object *pobj,
+			       const struct lu_fid *fid,
+			       const char *name, bool is_dir)
+{
+	struct mdd_object *obj;
+	struct thandle *th;
+	int rc;
+
+	ENTRY;
+
+	obj = mdd_object_find(env, mdd, fid);
+	if (IS_ERR(obj))
+		RETURN(PTR_ERR(obj));
+
+	th = mdd_trans_create(env, mdd);
+	if (IS_ERR(th)) {
+		rc = PTR_ERR(th);
+		if (rc != -EINPROGRESS)
+			CERROR("%s: cannot get orphan thandle: rc = %d\n",
+			       mdd2obd_dev(mdd)->obd_name, rc);
+		GOTO(out_put, rc);
+	}
+
+	rc = mdo_declare_index_delete(env, pobj, name, th);
+	if (rc)
+		GOTO(out, rc);
+
+	if (!mdd_object_exists(obj))
+		GOTO(out, rc = -ENOENT);
+
+	rc = mdo_declare_ref_del(env, obj, th);
+	if (rc)
+		GOTO(out, rc);
+
+	if (S_ISDIR(mdd_object_type(obj))) {
+		rc = mdo_declare_ref_del(env, obj, th);
+		if (rc)
+			GOTO(out, rc);
+
+		rc = mdo_declare_ref_del(env, pobj, th);
+		if (rc)
+			GOTO(out, rc);
+	}
+
+	rc = mdo_declare_destroy(env, obj, th);
+	if (rc)
+		GOTO(out, rc);
+
+	rc = mdd_trans_start(env, mdd, th);
+	if (rc)
+		GOTO(out, rc);
+
+	mdd_write_lock(env, obj, DT_TGT_CHILD);
+	rc = __mdd_index_delete(env, pobj, name, is_dir, th);
+	/* FIXME: Should we remove object even dt_delete failed? */
+	if (rc)
+		GOTO(cleanup, rc);
+
+	rc = mdo_ref_del(env, obj, th);
+	if (rc)
+		GOTO(cleanup, rc);
+
+	if (is_dir)
+		/* unlink dot */
+		mdo_ref_del(env, obj, th);
+
+	rc = mdo_destroy(env, obj, th);
+cleanup:
+	mdd_write_unlock(env, obj);
+out:
+	mdd_trans_stop(env, mdd, 0, th);
+out_put:
+	mdd_object_put(env, obj);
+	RETURN(rc);
+}
+
+static int mdd_tree_remove(const struct lu_env *env, struct md_object *pobj,
+			   struct md_object *cobj, const struct lu_name *lname,
+			   struct md_attr *ma)
+{
+	struct mdd_object *mdd_obj;
+	struct mdd_thread_info *info = mdd_env_info(env);
+	struct mdd_object *mdd_pobj = md2mdd_obj(pobj);
+	struct mdd_object *mdd_cobj = md2mdd_obj(cobj);
+	struct mdd_device *mdd = mdo2mdd(pobj);
+	struct lu_dirent *ent = &mdd_env_info(env)->mti_ent;
+	struct linkea_data *ldata = &info->mti_link_data;
+	const struct dt_it_ops *iops;
+	const struct lu_fid *root;
+	struct lu_fid fid;
+	struct dt_object *obj;
+	struct dt_it *it;
+	__u16 type;
+	int rc;
+
+	ENTRY;
+
+	CDEBUG(D_INODE,
+	       "Subtree removal for directory '%s'\n", lname->ln_name);
+	LASSERT(ma->ma_attr_flags & MDS_SUBTREE_REMOVAL);
+	root = mdd_object_fid(mdd_cobj);
+	fid = *root;
+	mdd_obj = mdd_cobj;
+repeat:
+	obj = mdd_object_child(mdd_obj);
+	if (!dt_try_as_dir(env, obj))
+		RETURN(-ENOTDIR);
+
+	iops = &obj->do_index_ops->dio_it;
+	it = iops->init(env, obj, LUDA_64BITHASH | LUDA_TYPE);
+	if (IS_ERR(it)) {
+		rc = PTR_ERR(it);
+		GOTO(out, rc);
+	}
+
+	rc = iops->load(env, it, 0);
+	if (rc < 0)
+		GOTO(out_put, rc);
+	if (rc == 0) {
+		CERROR("%s: loading iterator to remove the subtree, rc = 0\n",
+		       mdd2obd_dev(mdd)->obd_name);
+		rc = iops->next(env, it);
+	}
+
+	do {
+		rc = iops->rec(env, it, (struct dt_rec *)ent,
+			       LUDA_64BITHASH | LUDA_TYPE);
+		if (rc == 0)
+			rc = mdd_unpack_ent(ent, &type);
+		if (rc) {
+			CERROR("%s: failed to iterate backend: rc = %d\n",
+			       mdd2obd_dev(mdd)->obd_name, rc);
+			goto next;
+		}
+
+		/* skip dot and dotdot entries */
+		if (name_is_dot_or_dotdot(ent->lde_name, ent->lde_namelen))
+			goto next;
+
+		if (!fid_seq_in_fldb(fid_seq(&ent->lde_fid)))
+			goto next;
+
+		if (S_ISDIR(type)) {
+			iops->put(env, it);
+			iops->fini(env, it);
+
+			if (!lu_fid_eq(root, &fid))
+				mdd_object_put(env, mdd_obj);
+
+			fid = ent->lde_fid;
+			CDEBUG(D_INODE, "Sink to next level '%s' "DFID"\n",
+			       ent->lde_name, PFID(&fid));
+			mdd_obj = mdd_object_find(env, mdd, &fid);
+			if (IS_ERR(mdd_obj))
+				RETURN(PTR_ERR(mdd_obj));
+
+			/* Sink down to next level of the directory. */
+			GOTO(repeat, rc);
+		}
+
+		CDEBUG(D_INODE, "Removing entry: '%s' "DFID"\n",
+		       ent->lde_name, PFID(&ent->lde_fid));
+		rc = mdd_tree_remove_one(env, mdd, mdd_obj, &ent->lde_fid,
+					 ent->lde_name, S_ISDIR(type));
+		if (rc)
+			CERROR("%s: failed to remove '%s': rc = %d\n",
+			       mdd2obd_dev(mdd)->obd_name, ent->lde_name, rc);
+next:
+		rc = iops->next(env, it);
+	} while (rc == 0);
+
+out_put:
+	iops->put(env, it);
+	iops->fini(env, it);
+
+	/* Finish to iterator over a children subtree. */
+	if (!lu_fid_eq(root, &fid)) {
+		struct mdd_object *parent;
+		struct lu_name name;
+		struct lu_fid pfid;
+
+		rc = mdd_links_read_with_rec(env, mdd_obj, ldata);
+		mdd_object_put(env, mdd_obj);
+		if (rc)
+			GOTO(out, rc);
+
+		LASSERT(ldata->ld_leh != NULL);
+		/* Directory should only have one parent. */
+		if (ldata->ld_leh->leh_reccount > 1)
+			GOTO(out, rc = -EINVAL);
+
+		ldata->ld_lee = (struct link_ea_entry *)(ldata->ld_leh + 1);
+		linkea_entry_unpack(ldata->ld_lee, &ldata->ld_reclen,
+				    &name, &pfid);
+		if (lu_fid_eq(root, &pfid)) {
+			CDEBUG(D_INODE, "Top level '%s':"DFID" root="DFID"\n",
+			       name.ln_name, PFID(&fid), PFID(&pfid));
+			rc = mdd_tree_remove_one(env, mdd, mdd_cobj, &fid,
+						 name.ln_name, true);
+			if (rc)
+				GOTO(out, rc);
+
+			mdd_obj = mdd_cobj;
+			fid = pfid;
+		} else {
+			parent = mdd_object_find(env, mdd, &pfid);
+			if (IS_ERR(parent))
+				RETURN(PTR_ERR(parent));
+
+			CDEBUG(D_INODE, "Iter over '%s':"DFID" root="DFID"\n",
+			       name.ln_name, PFID(&fid), PFID(root));
+			rc = mdd_tree_remove_one(env, mdd, parent, &fid,
+						 name.ln_name, true);
+			if (rc)
+				GOTO(out, rc);
+
+			mdd_obj = parent;
+			fid = pfid;
+		}
+		GOTO(repeat, rc);
+	}
+
+	rc = mdd_tree_remove_one(env, mdd, mdd_pobj, root,
+				 lname->ln_name, true);
+out:
+	RETURN(rc);
+}
+
 /**
  * Delete name entry and the object.
  * Note: no_name == 1 means it only destory the object, i.e. name_entry
@@ -1693,6 +1951,7 @@ static int mdd_unlink(const struct lu_env *env, struct md_object *pobj,
 	struct mdd_device *mdd = mdo2mdd(pobj);
 	struct thandle    *handle;
 	int rc, is_dir = 0, cl_flags = 0;
+	int tree_remove = !!(ma->ma_attr_flags & MDS_SUBTREE_REMOVAL);
 	ENTRY;
 
 	/* let shutdown to start */
@@ -1723,9 +1982,18 @@ static int mdd_unlink(const struct lu_env *env, struct md_object *pobj,
 			cl_flags |= CLF_UNLINK_HSM_EXISTS;
 	}
 
-	rc = mdd_unlink_sanity_check(env, mdd_pobj, pattr, mdd_cobj, cattr);
+	rc = mdd_unlink_sanity_check(env, mdd_pobj, pattr, mdd_cobj,
+				     cattr, tree_remove == 0);
 	if (rc)
                 RETURN(rc);
+
+	if (mdd_cobj && is_dir) {
+		rc = mdd_dir_is_empty(env, mdd_cobj);
+		if (rc == -ENOTEMPTY && tree_remove)
+			RETURN(mdd_tree_remove(env, pobj, cobj, lname, ma));
+		if (rc)
+			RETURN(rc);
+	}
 
 	handle = mdd_trans_create(env, mdd);
 	if (IS_ERR(handle))

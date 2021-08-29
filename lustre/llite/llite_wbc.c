@@ -969,6 +969,7 @@ static int wbc_do_rmfid(struct inode *dir, unsigned int valid)
 	unsigned int nr;
 	__u32 total = 0;
 	__u32 count;
+	__u64 flags;
 	size_t size;
 	int rc;
 
@@ -979,6 +980,10 @@ static int wbc_do_rmfid(struct inode *dir, unsigned int valid)
 	wbci->wbci_removed_count = 0;
 	list_splice_init(&wbci->wbci_removed_list, &head);
 	spin_unlock(&wbci->wbci_removed_lock);
+
+	flags = OBD_FL_LOCKLESS;
+	if (wbci->wbci_rmpol == WBC_RMPOL_SUBTREE)
+		flags |= OBD_FL_SUBTREE_RM;
 
 	nr = min_t(__u32, max, count);
 	size = offsetof(struct fid_array, fa_fids[nr]);
@@ -996,8 +1001,7 @@ static int wbc_do_rmfid(struct inode *dir, unsigned int valid)
 		total++;
 		OBD_FREE_PTR(item);
 		if (fa->fa_nr == max) {
-			rc = md_rmfid(ll_i2mdexp(dir), fa, rcs,
-				      OBD_FL_LOCKLESS, NULL);
+			rc = md_rmfid(ll_i2mdexp(dir), fa, rcs, flags, NULL);
 			if (rc)
 				GOTO(free_rcs, rc);
 			fa->fa_nr = 0;
@@ -1006,7 +1010,7 @@ static int wbc_do_rmfid(struct inode *dir, unsigned int valid)
 
 	LASSERT(total == count);
 	if (fa->fa_nr)
-		rc = md_rmfid(ll_i2mdexp(dir), fa, rcs, OBD_FL_LOCKLESS, NULL);
+		rc = md_rmfid(ll_i2mdexp(dir), fa, rcs, flags, NULL);
 
 free_rcs:
 	OBD_FREE_PTR_ARRAY(rcs, nr);

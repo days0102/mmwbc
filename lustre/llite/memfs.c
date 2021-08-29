@@ -423,7 +423,7 @@ static int memfs_remove_policy(struct inode *dir, struct dentry *dchild,
 	case WBC_RMPOL_DELAY:
 		RETURN(wbc_add_removed_item(dir, dchild, WBC_RMPOL_DELAY));
 	case WBC_RMPOL_SUBTREE:
-		RETURN(-EOPNOTSUPP);
+		RETURN(wbc_add_removed_item(dir, dchild, WBC_RMPOL_SUBTREE));
 	default:
 		RETURN(0);
 	}

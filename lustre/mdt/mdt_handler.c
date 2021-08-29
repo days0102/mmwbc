@@ -2409,6 +2409,7 @@ out:
 static int mdt_rmfid(struct tgt_session_info *tsi)
 {
 	struct mdt_thread_info *mti = tsi2mdt_info(tsi);
+	struct md_attr *ma = &mti->mti_attr;
 	struct mdt_body *reqbody;
 	struct lu_fid *fids, *rfids;
 	int bufsize, rc;
@@ -2420,8 +2421,13 @@ static int mdt_rmfid(struct tgt_session_info *tsi)
 	if (reqbody == NULL)
 		RETURN(-EPROTO);
 
-	mti->mti_parent_locked = !!(reqbody->mbo_valid & OBD_MD_FLFLAGS &&
-				    reqbody->mbo_flags & OBD_FL_LOCKLESS);
+	if (reqbody->mbo_valid & OBD_MD_FLFLAGS) {
+		mti->mti_parent_locked = !!(reqbody->mbo_flags &
+					    OBD_FL_LOCKLESS);
+		if (reqbody->mbo_flags & OBD_FL_SUBTREE_RM)
+			ma->ma_attr_flags |= MDS_SUBTREE_REMOVAL;
+	}
+
 	bufsize = req_capsule_get_size(tsi->tsi_pill, &RMF_FID_ARRAY,
 				       RCL_CLIENT);
 	nr = bufsize / sizeof(struct lu_fid);
