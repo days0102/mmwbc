@@ -130,6 +130,15 @@ struct mdd_generic_thread {
 	bool			mgt_init;
 };
 
+struct mdd_dir_remover {
+	struct lu_env		 mrm_env;
+	struct task_struct	*mrm_task;
+	spinlock_t		 mrm_lock;
+	struct list_head	 mrm_list;
+	/* Use orphan dir "PENDING" as the root of removed directories. */
+	struct mdd_object	*mrm_root;
+};
+
 struct mdd_device {
         struct md_device                 mdd_md_dev;
 	struct obd_export               *mdd_child_exp;
@@ -149,6 +158,7 @@ struct mdd_device {
         struct mdd_object               *mdd_dot_lustre;
         struct mdd_dot_lustre_objs       mdd_dot_lustre_objs;
 	unsigned int			 mdd_sync_permission;
+	unsigned int			 mdd_async_tree_remove;
 	int				 mdd_connects;
 	int				 mdd_append_stripe_count;
 	char				 mdd_append_pool[LOV_MAXPOOLNAME + 1];
@@ -157,6 +167,7 @@ struct mdd_device {
 	struct kobject			 mdd_kobj;
 	struct kobj_type		 mdd_ktype;
 	struct completion		 mdd_kobj_unregister;
+	struct mdd_dir_remover		 mdd_remover;
 };
 
 enum mod_flags {
@@ -164,6 +175,8 @@ enum mod_flags {
 	DEAD_OBJ	= BIT(0),
 	ORPHAN_OBJ	= BIT(1),
 	VOLATILE_OBJ	= BIT(4),
+	/* The root object for a subtree had been removed by a WBC client. */
+	REMOVED_OBJ	= BIT(5),
 };
 
 struct mdd_object {
@@ -174,6 +187,7 @@ struct mdd_object {
 	ktime_t			mod_cltime;
 	unsigned long		mod_flags;
 	struct list_head	mod_users;  /**< unique user opens */
+	struct list_head	mod_remove_item;
 };
 
 #define	MTI_KEEP_KEY	0x01
@@ -198,6 +212,7 @@ struct mdd_thread_info {
 	char			  mti_key[NAME_MAX + 16];
 	int			  mti_flags;
 	char			  mti_name[NAME_MAX + 1];
+	char			  mti_fidname[FID_LEN + 2];
 	struct lu_buf             mti_buf[4];
 	/* persistent buffers, must be handled with lu_buf_alloc/free */
 	struct lu_buf		  mti_big_buf;
@@ -245,6 +260,13 @@ void mdd_write_unlock(const struct lu_env *env, struct mdd_object *obj);
 void mdd_read_unlock(const struct lu_env *env, struct mdd_object *obj);
 int mdd_write_locked(const struct lu_env *env, struct mdd_object *obj);
 
+/* mdd_remove.c */
+int mdd_remover_init(const struct lu_env *env, struct mdd_device *mdd);
+void mdd_remover_fini(const struct lu_env *env, struct mdd_device *mdd);
+void mdd_remove_item_add(struct mdd_object *obj);
+int mdd_tree_remove(const struct lu_env *env, struct mdd_object *pobj,
+		    struct mdd_object *cobj, const char *name);
+
 /* mdd_dir.c */
 int mdd_may_create(const struct lu_env *env, struct mdd_object *pobj,
 		   const struct lu_attr *pattr, struct mdd_object *cobj,
@@ -273,6 +295,11 @@ int mdd_links_write(const struct lu_env *env, struct mdd_object *mdd_obj,
 int mdd_links_read(const struct lu_env *env,
 		   struct mdd_object *mdd_obj,
 		   struct linkea_data *ldata);
+int mdd_links_read_with_rec(const struct lu_env *env,
+			    struct mdd_object *mdd_obj,
+			    struct linkea_data *ldata);
+int __mdd_index_delete(const struct lu_env *env, struct mdd_object *pobj,
+		       const char *name, int is_dir, struct thandle *handle);
 struct lu_buf *mdd_links_get(const struct lu_env *env,
                              struct mdd_object *mdd_obj);
 int mdd_links_rename(const struct lu_env *env,
@@ -417,7 +444,8 @@ struct lu_object *mdd_object_alloc(const struct lu_env *env,
 int mdd_local_file_create(const struct lu_env *env, struct mdd_device *mdd,
 			  const struct lu_fid *pfid, const char *name,
 			  __u32 mode, struct lu_fid *fid);
-
+struct md_object *mdo_locate(const struct lu_env *env, struct md_device *md,
+			     const struct lu_fid *fid);
 int mdd_acl_chmod(const struct lu_env *env, struct mdd_object *o, __u32 mode,
                   struct thandle *handle);
 int mdd_acl_set(const struct lu_env *env, struct mdd_object *obj,

@@ -2037,6 +2037,7 @@ test_33() {
 
 	echo "level: $level files_per_level: $nr_level"
 	setup_wbc "flush_mode=$flush_mode rmpol=subtree"
+	$LCTL set_param mdd.*.async_tree_remove=1
 
 	mkdir $DIR/$tdir || error "mkdir $DIR/$tdir failed"
 	for l in $(seq 1 $level); do
@@ -2061,14 +2062,20 @@ test_33() {
 	$LFS wbc state $root || error "$LFS wbc state $root failed"
 	check_mdt_fileset_exist "$mdtset" 0 ||
 		error "'$mdtset' should exist on MDT"
-	lctl set_param debug=trace
-	lctl set_param debug=+inode
+	#lctl set_param debug=trace
+	lctl set_param debug=inode
 	lctl set_param subsystem_debug=llite
 	lctl set_param subsystem_debug=+mds
 	lctl clear
 	stat $DIR2/$tdir || error "stat $DIR2/$tdir failed"
 	lctl dk > log.tree
 	$LFS wbc state $root || error "$LFS wbc state $root failed"
+
+	local mdtdev=$(mdsdevname ${SINGLEMDS//mds/})
+	echo "PENDING listing:"
+	debugfs -R "ls /PENDING" $mdtdev
+	echo "ROOT listing:"
+	debugfs -R "ls /ROOT/$tdir" $mdtdev
 	check_mdt_fileset_exist "$mdtset" 1 ||
 		error "'$mdtset' should remove from MDT"
 }

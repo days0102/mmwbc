@@ -180,9 +180,9 @@ int mdd_links_read(const struct lu_env *env,
 	return rc;
 }
 
-static int mdd_links_read_with_rec(const struct lu_env *env,
-				   struct mdd_object *mdd_obj,
-				   struct linkea_data *ldata)
+int mdd_links_read_with_rec(const struct lu_env *env,
+			    struct mdd_object *mdd_obj,
+			    struct linkea_data *ldata)
 {
 	int rc;
 
@@ -705,9 +705,8 @@ static int __mdd_index_insert(const struct lu_env *env, struct mdd_object *pobj,
 }
 
 /* delete named index, drop reference if isdir */
-static int __mdd_index_delete(const struct lu_env *env, struct mdd_object *pobj,
-			      const char *name, int is_dir,
-			      struct thandle *handle)
+int __mdd_index_delete(const struct lu_env *env, struct mdd_object *pobj,
+		       const char *name, int is_dir, struct thandle *handle)
 {
 	int rc;
 	ENTRY;
@@ -1536,7 +1535,7 @@ int mdd_finish_unlink(const struct lu_env *env,
 		/* add new orphan and the object
 		 * will be deleted during mdd_close() */
 		obj->mod_flags |= DEAD_OBJ;
-		if (obj->mod_count) {
+		if (obj->mod_count || obj->mod_flags & REMOVED_OBJ) {
 			rc = mdd_orphan_insert(env, obj, th);
 			if (rc == 0)
 				CDEBUG(D_HA, "Object "DFID" is inserted into "
@@ -1672,7 +1671,7 @@ static bool mdd_hsm_archive_exists(const struct lu_env *env,
 		RETURN(true);
 	RETURN(false);
 }
-
+#if 0
 static int mdd_unpack_ent(struct lu_dirent *ent, __u16 *type)
 {
 	struct luda_type *lt;
@@ -1777,7 +1776,7 @@ out_put:
 	RETURN(rc);
 }
 
-static int mdd_tree_remove(const struct lu_env *env, struct md_object *pobj,
+static int mdd_tree_remove2(const struct lu_env *env, struct md_object *pobj,
 			   struct md_object *cobj, const struct lu_name *lname,
 			   struct md_attr *ma)
 {
@@ -1928,6 +1927,7 @@ out_put:
 out:
 	RETURN(rc);
 }
+#endif
 
 /**
  * Delete name entry and the object.
@@ -1989,8 +1989,17 @@ static int mdd_unlink(const struct lu_env *env, struct md_object *pobj,
 
 	if (mdd_cobj && is_dir) {
 		rc = mdd_dir_is_empty(env, mdd_cobj);
-		if (rc == -ENOTEMPTY && tree_remove)
-			RETURN(mdd_tree_remove(env, pobj, cobj, lname, ma));
+		if (rc == -ENOTEMPTY && tree_remove) {
+			if (mdd->mdd_async_tree_remove) {
+				mdd_cobj->mod_flags |= REMOVED_OBJ;
+				rc = 0;
+			} else {
+				RETURN(mdd_tree_remove(env, mdd_pobj,
+						       mdd_cobj, name));
+				//RETURN(mdd_tree_remove2(env, pobj, cobj, lname, ma));
+			}
+		}
+
 		if (rc)
 			RETURN(rc);
 	}
@@ -2102,6 +2111,10 @@ cleanup:
 
 stop:
 	rc = mdd_trans_stop(env, mdd, rc, handle);
+
+	if (mdd_cobj != NULL && mdd_cobj->mod_flags & REMOVED_OBJ &&
+	    mdd_cobj->mod_flags & DEAD_OBJ)
+		mdd_remove_item_add(mdd_cobj);
 
 	return rc;
 }

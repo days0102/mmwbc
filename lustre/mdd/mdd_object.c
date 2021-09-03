@@ -285,6 +285,7 @@ struct lu_object *mdd_object_alloc(const struct lu_env *env,
 	mdd_obj->mod_count = 0;
 	o->lo_ops = &mdd_lu_obj_ops;
 	INIT_LIST_HEAD(&mdd_obj->mod_users);
+	INIT_LIST_HEAD(&mdd_obj->mod_remove_item);
 
 	return o;
 }

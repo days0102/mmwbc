@@ -8,5 +8,6 @@ mdd-objs := \
 	mdd_object.o \
 	mdd_orphans.o \
 	mdd_permission.o \
-	mdd_trans.o
+	mdd_trans.o \
+	mdd_remove.o
 @INCLUDE_RULES@

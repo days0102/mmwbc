@@ -2392,6 +2392,7 @@ static int mdt_rmfid_one(struct mdt_thread_info *info, struct lu_fid *fid,
 		/* remove every hardlink */
 		linkea_entry_unpack(lee, &reclen, name, pfid);
 		lee = (struct link_ea_entry *) ((char *)lee + reclen);
+
 		rc = mdt_rmfid_unlink(info, pfid, name, obj, ctime);
 		if (rc)
 			break;

@@ -861,9 +861,8 @@ static const struct md_dir_operations mdd_lpf_dir_ops = {
 	.mdo_unlink = mdd_dummy_unlink
 };
 
-static struct md_object *mdo_locate(const struct lu_env *env,
-				    struct md_device *md,
-				    const struct lu_fid *fid)
+struct md_object *mdo_locate(const struct lu_env *env, struct md_device *md,
+			     const struct lu_fid *fid)
 {
 	struct lu_object *obj;
 	struct md_object *mdo;
@@ -1069,6 +1068,7 @@ static int mdd_hsm_actions_llog_fini(const struct lu_env *env,
 static void mdd_device_shutdown(const struct lu_env *env, struct mdd_device *m,
 				struct lustre_cfg *cfg)
 {
+	mdd_remover_fini(env, m);
 	barrier_deregister(m->mdd_bottom);
 	lfsck_degister(env, m->mdd_bottom);
 	mdd_hsm_actions_llog_fini(env, m);
@@ -1286,8 +1286,17 @@ static int mdd_prepare(const struct lu_env *env,
 		GOTO(out_lfsck, rc);
 	}
 
+	rc = mdd_remover_init(env, mdd);
+	if (rc) {
+		CERROR("%s: failed to initialize remover: rc = %d\n",
+		       mdd2obd_dev(mdd)->obd_name, rc);
+		GOTO(out_barrier, rc);
+	}
+
 	RETURN(0);
 
+out_barrier:
+	barrier_deregister(mdd->mdd_bottom);
 out_lfsck:
 	lfsck_degister(env, mdd->mdd_bottom);
 out_nodemap:
