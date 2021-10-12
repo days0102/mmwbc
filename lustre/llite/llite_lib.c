@@ -84,7 +84,7 @@ static inline unsigned int ll_get_ra_async_max_active(void)
 	return cfs_cpt_weight(cfs_cpt_tab, CFS_CPT_ANY) >> 1;
 }
 
-static struct ll_sb_info *ll_init_sbi(void)
+static struct ll_sb_info *ll_init_sbi(struct super_block *sb)
 {
 	struct ll_sb_info *sbi = NULL;
 	unsigned long pages;
@@ -103,7 +103,7 @@ static struct ll_sb_info *ll_init_sbi(void)
 	if (rc < 0)
 		GOTO(out_sbi, rc);
 
-	rc = wbc_super_init(&sbi->ll_wbc_super);
+	rc = wbc_super_init(&sbi->ll_wbc_super, sb);
 	if (rc)
 		GOTO(out_pcc, rc);
 
@@ -1240,7 +1240,7 @@ int ll_fill_super(struct super_block *sb)
 		GOTO(out_free_cfg, err = -ENOMEM);
 
 	/* client additional sb info */
-	lsi->lsi_llsbi = sbi = ll_init_sbi();
+	lsi->lsi_llsbi = sbi = ll_init_sbi(sb);
 	if (IS_ERR(sbi))
 		GOTO(out_free_cfg, err = PTR_ERR(sbi));
 

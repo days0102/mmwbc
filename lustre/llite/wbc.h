@@ -173,6 +173,35 @@ struct wbc_conf {
 	int			wbcc_hiwm_ratio; /* High watermark. */
 	__u32			wbcc_hiwm_inodes_count;
 	__u32			wbcc_hiwm_pages_count;
+
+	unsigned long		wbcc_dirty_flush_thresh;	
+};
+
+enum wbc_stat_item {
+	WB_INODE_WRITEBAK,
+	WB_INODE_DIRTY,
+	WB_INODE_WRITTEN,
+	WB_PAGES_DIRTY,
+	NR_WB_STAT,
+};
+
+#ifndef WB_STAT_BATCH
+#define WB_STAT_BATCH (8*(1+ilog2(nr_cpu_ids)))
+#endif
+
+struct memfs_writeback {
+	struct super_block	*wb_sb;
+	unsigned long		 wb_state;
+	unsigned int		 wb_capabilities;
+	spinlock_t		 wb_work_lock;
+	struct list_head	 wb_work_list;
+	/* Work item used for writeback */
+	struct delayed_work	 wb_dwork;
+	wait_queue_head_t	 wb_waitq;
+	struct percpu_counter	 wb_stat[NR_WB_STAT];
+
+	/* Dirty inode threshold to trigger flush on background. */
+	unsigned long		 wb_dirty_flush_thresh;
 };
 
 struct wbc_super {
@@ -189,7 +218,14 @@ struct wbc_super {
 	struct list_head	 wbcs_data_inode_lru;
 	spinlock_t		 wbcs_data_lru_lock;
 	struct task_struct	*wbcs_reclaim_task;
+
+	/* Writeback dirty inodes and cache pages in MemFS. */
+	struct memfs_writeback	 wbcs_mwb;
 };
+
+#ifndef I_SYNC_QUEUED
+#define I_SYNC_QUEUED		(1 << 17)
+#endif
 
 /* Anchor for synchronous transfer. */
 struct wbc_sync_io {
@@ -217,6 +253,12 @@ struct wbc_context {
 
 #define ioc_batch	ioc_engine.ioe_batch
 #define ioc_rqset	ioc_engine.ioe_rqset
+
+enum wbc_control_flags {
+	WBC_FL_DECOMPLETE	= BIT(0),
+	WBC_FL_UNRSV_CHILDREN	= BIT(1),
+	WBC_FL_SYNC_NONE	= BIT(2),
+};
 
 /* Extend for the data structure writeback_control in Linux kernel */
 struct writeback_control_ext {
@@ -253,7 +295,8 @@ struct writeback_control_ext {
 	unsigned for_decomplete:1;	/* decomplete a WBC directory */
 	/* Unreserve all children from inode limit when decomplete parent. */
 	unsigned unrsv_children_decomp:1;
-	unsigned has_ext:1;
+	unsigned for_quantum_flush:1;
+	unsigned has_ioctx:1;
 	unsigned unused_bit0:1,
 		 unused_bit1:1,
 		 unused_bit2:1,
@@ -275,6 +318,8 @@ struct writeback_control_ext {
 	size_t wb_lcand_bytes;		/* bytes written by last candidate */
 	size_t wb_tcand_bytes;		/* bytes written by this candidate */
 #endif
+	/* I/O context for MemFS writeback. */
+	struct wbc_context context;
 };
 
 struct wbc_removed_item {
@@ -350,6 +395,7 @@ enum wbc_cmd_op {
 	WBC_CMD_OP_MAX_QLEN		= 0x0400,
 	WBC_CMD_OP_MAX_NRPAGES_PER_FILE	= 0x0800,
 	WBC_CMD_OP_MAX_RMFID_COUNT	= 0x1000,
+	WBC_CMD_OP_DIRTY_FLUSH_THRESH	= 0x2000,
 };
 
 struct wbc_cmd {
@@ -377,6 +423,74 @@ do {									\
 } while (0)
 
 #endif
+
+
+static inline void __add_wbc_stat(struct memfs_writeback *mwb,
+				  enum wbc_stat_item item, s64 amount)
+{
+	percpu_counter_add_batch(&mwb->wb_stat[item], amount, WB_STAT_BATCH);
+}
+
+static inline void inc_wbc_stat(struct memfs_writeback *mwb,
+				enum wbc_stat_item item)
+{
+	__add_wbc_stat(mwb, item, 1);
+}
+
+static inline void dec_wbc_stat(struct memfs_writeback *mwb,
+				enum wbc_stat_item item)
+{
+	__add_wbc_stat(mwb, item, -1);
+}
+
+static inline s64 wbc_stat(struct memfs_writeback *mwb, enum wbc_stat_item item)
+{
+	return percpu_counter_read_positive(&mwb->wb_stat[item]);
+}
+
+static inline s64 wbc_stat_sum(struct memfs_writeback *mwb,
+			       enum wbc_stat_item item)
+{
+	return percpu_counter_sum_positive(&mwb->wb_stat[item]);
+}
+
+/*
+ * maximal error of a stat counter.
+ */
+static inline unsigned long wbc_stat_error(void)
+{
+#ifdef CONFIG_SMP
+	return nr_cpu_ids * WB_STAT_BATCH;
+#else
+	return 1;
+#endif
+}
+
+static inline bool wbc_cap_flush_parallel(struct memfs_writeback *mwb)
+{
+	return mwb->wb_dirty_flush_thresh > 0;
+}
+
+static inline bool wbc_cap_account_dirty(struct memfs_writeback *mwb)
+{
+	return mwb->wb_dirty_flush_thresh > 0;
+}
+
+void wbc_check_dirty_flush(struct memfs_writeback *mwb);
+
+static inline void wbc_account_inode_dirtied(struct memfs_writeback *mwb)
+{
+	if (wbc_cap_account_dirty(mwb)) {
+		inc_wbc_stat(mwb, WB_INODE_DIRTY);
+		wbc_check_dirty_flush(mwb);
+	}
+}
+
+static inline void wbc_unacct_inode_dirtied(struct memfs_writeback *mwb)
+{
+	if (wbc_cap_account_dirty(mwb))
+		dec_wbc_stat(mwb, WB_INODE_DIRTY);
+}
 
 static inline bool md_opcode_need_exlock(enum md_opcode opc)
 {
@@ -443,6 +557,11 @@ static inline bool wbc_inode_data_committed(struct wbc_inode *wbci)
 	return wbci->wbci_flags & WBC_STATE_FL_DATA_COMMITTED;
 }
 
+static inline bool wbc_inode_assimilated(struct wbc_inode *wbci)
+{
+	return wbci->wbci_flags & WBC_STATE_FL_DATA_COMMITTED;
+}
+
 static inline bool wbc_inode_data_caching(struct wbc_inode *wbci)
 {
 	return wbc_inode_has_protected(wbci) && !wbc_inode_data_committed(wbci);
@@ -476,9 +595,9 @@ static inline bool wbc_inode_remove_dirty(struct wbc_inode *wbci)
 }
 
 static inline bool wbc_decomplete_lock_keep(struct wbc_inode *wbci,
-					    struct writeback_control_ext *wbcx)
+					    struct md_op_item *item)
 {
-	return wbcx->for_decomplete && wbc_mode_lock_keep(wbci);
+	return wbc_mode_lock_keep(wbci) && item->mop_flags & WBC_FL_DECOMPLETE;
 }
 
 static inline enum mds_op_bias wbc_md_op_bias(struct wbc_inode *wbci)
@@ -578,13 +697,20 @@ int wbc_make_inode_decomplete(struct inode *inode, unsigned int unrsv_children);
 int wbc_make_dir_decomplete(struct inode *dir, struct dentry *parent,
 			    unsigned int unrsv_children);
 int wbc_make_data_commit(struct dentry *dentry);
-int wbc_super_init(struct wbc_super *super);
+int wbc_super_init(struct wbc_super *super, struct super_block *sb);
 void wbc_super_fini(struct wbc_super *super);
 void wbc_inode_init(struct inode *inode);
 void wbc_dentry_init(struct dentry *dentry);
 int wbc_cmd_handle(struct wbc_super *super, struct wbc_cmd *cmd);
 int wbc_cmd_parse_and_handle(char *buffer, unsigned long count,
 			     struct wbc_super *super);
+int wbc_workqueue_init(void);
+void wbc_workqueue_fini(void);
+void wbc_check_dirty_flush(struct memfs_writeback *mwb);
+int wbc_queue_writeback_work(struct dentry *parent);
+void __inode_wait_for_writeback(struct inode *inode);
+void __wbc_inode_wait_for_writeback(struct inode *inode);
+void wbc_kill_super(struct wbc_super *super);
 
 /* memfs.c */
 void wbc_inode_operations_set(struct inode *inode, umode_t mode, dev_t dev);
@@ -598,13 +724,15 @@ int wbcfs_commit_cache_pages(struct inode *inode);
 int wbcfs_inode_flush_lockless(struct inode *inode,
 			       struct writeback_control_ext *wbcx);
 int wbcfs_context_init(struct super_block *sb, struct wbc_context *ctx,
-		       bool lazy_init);
+		       bool lazy_init, bool anchor_used);
 int wbcfs_context_fini(struct super_block *sb, struct wbc_context *ctx);
 int wbcfs_context_prepare(struct super_block *sb, struct wbc_context *ctx);
 int wbcfs_context_commit(struct super_block *sb, struct wbc_context *ctx);
 int wbcfs_flush_dir_child(struct wbc_context *ctx, struct inode *dir,
 			  struct dentry *dchild, struct ldlm_lock *lock,
 			  struct writeback_control_ext *wbcx);
+int wbcfs_writeback_dir_child(struct inode *dir, struct dentry *child,
+			      struct writeback_control_ext *wbcx);
 int wbcfs_file_open_local(struct inode *inode, struct file *file);
 void wbcfs_file_release_local(struct inode *inode, struct file *file);
 int wbcfs_dcache_dir_open(struct inode *inode, struct file *file);

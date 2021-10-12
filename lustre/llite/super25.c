@@ -293,6 +293,10 @@ static int __init lustre_init(void)
 	if (rc)
 		GOTO(out_xattr, rc);
 
+	rc = wbc_workqueue_init();
+	if (rc)
+		GOTO(out_xattr, rc);
+
 	RETURN(0);
 
 out_xattr:
@@ -312,6 +316,7 @@ out_cache:
 
 static void __exit lustre_exit(void)
 {
+	wbc_workqueue_fini();
 	unregister_filesystem(&lustre_fs_type);
 
 	llite_tunables_unregister();

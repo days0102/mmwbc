@@ -1775,6 +1775,16 @@ static inline struct wbc_conf *ll_i2wbcc(struct inode *inode)
 	return &ll_i2wbcs(inode)->wbcs_conf;
 }
 
+static inline struct memfs_writeback *ll_i2mwb(struct inode *inode)
+{
+	return &ll_i2wbcs(inode)->wbcs_mwb;
+}
+
+static inline struct memfs_writeback *ll_s2mwb(struct super_block *sb)
+{
+	return &ll_s2wbcs(sb)->wbcs_mwb;
+}
+
 static inline bool ll_data_in_lustre(struct inode *inode)
 {
 	struct ll_inode_info *lli = ll_i2info(inode);

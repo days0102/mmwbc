@@ -238,6 +238,8 @@ static int wbc_new_node(struct inode *dir, struct dentry *dchild,
 		break;
 	}
 
+	wbc_account_inode_dirtied(ll_i2mwb(inode));
+
 out_iput:
 	if (rc) {
 		wbc_dirent_account_dec(dir, dchild);
@@ -413,7 +415,18 @@ static int memfs_remove_policy(struct inode *dir, struct dentry *dchild,
 
 	ENTRY;
 
-	if (!wbc_mode_lock_keep(wbci) || !wbc_inode_was_flushed(wbci))
+	if (!wbc_mode_lock_keep(wbci))
+		RETURN(0);
+
+	spin_lock(&inode->i_lock);
+	wbci->wbci_flags |= WBC_STATE_FL_FREEING;
+	if (inode->i_state & I_SYNC)
+		__inode_wait_for_writeback(inode);
+	if (wbci->wbci_flags & WBC_STATE_FL_WRITEBACK)
+		__wbc_inode_wait_for_writeback(inode);
+	spin_unlock(&inode->i_lock);
+
+	if (!wbc_inode_was_flushed(wbci))
 		RETURN(0);
 
 	switch (conf->wbcc_rmpol) {
@@ -440,6 +453,7 @@ static inline void memfs_remove_from_dcache(struct inode *dir,
 	LASSERT(wbc_inode_reserved(wbci));
 	wbc_inode_unreserve_dput(inode, dchild);
 	wbc_dirent_account_dec(dir, dchild);
+	wbc_unacct_inode_dirtied(ll_i2mwb(dir));
 }
 
 static int memfs_rmdir(struct inode *dir, struct dentry *dchild)
@@ -449,11 +463,13 @@ static int memfs_rmdir(struct inode *dir, struct dentry *dchild)
 
 	ENTRY;
 
+	printk("rmdir %pd\n", dchild);
 	down_read(&wbci->wbci_rw_sem);
 	if (wbc_inode_complete(wbci)) {
 		rc = memfs_remove_policy(dir, dchild, true);
 		if (rc < 0)
 			GOTO(up_rwsem, rc);
+
 
 		/* copy from simple_rmdir() */
 		drop_nlink(dchild->d_inode);
@@ -489,6 +505,7 @@ static int memfs_unlink(struct inode *dir, struct dentry *dchild)
 
 	ENTRY;
 
+	printk("Unlink %pd\n", dchild);
 	down_read(&wbci->wbci_rw_sem);
 	if (wbc_inode_complete(wbci)) {
 		rc = memfs_remove_policy(dir, dchild, false);

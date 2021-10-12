@@ -149,7 +149,9 @@ static int mdt_create_lockless(struct tgt_session_info *tsi)
 		GOTO(put_child, rc);
 
 	if (ma->ma_valid & MA_LOV) {
-		LASSERT(info->mti_intent_lock && ma->ma_lmm_size != 0);
+		LASSERT(info->mti_intent_lock ||
+		        ma->ma_attr_flags & MDS_WBC_LOCKLESS);
+		LASSERT(ma->ma_lmm_size != 0);
 		repbody->mbo_eadatasize = ma->ma_lmm_size;
 		if (S_ISREG(ma->ma_attr.la_mode))
 			repbody->mbo_valid |= OBD_MD_FLEASIZE;

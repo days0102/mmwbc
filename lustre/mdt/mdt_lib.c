@@ -1182,6 +1182,9 @@ static int mdt_close_handle_unpack(struct mdt_thread_info *info)
 static inline int mdt_dlmreq_unpack(struct mdt_thread_info *info) {
 	struct req_capsule      *pill = info->mti_pill;
 
+	if (info->mti_attr.ma_attr_flags & MDS_WBC_LOCKLESS)
+		RETURN(0);
+
 	if (!info->mti_intent_lock &&
 	    req_capsule_get_size(pill, &RMF_DLM_REQ, RCL_CLIENT)) {
 		info->mti_dlm_req = req_capsule_client_get(pill, &RMF_DLM_REQ);

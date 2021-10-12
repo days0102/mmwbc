@@ -2081,6 +2081,107 @@ test_33() {
 }
 run_test 33 "Delay asynchronous removal with multiple levels"
 
+test_99a() {
+	local dir=$DIR/$tdir
+	local flush_mode="aging_keep"
+	local thresh=20
+	local nr_level=15
+	local level=3
+
+	setup_wbc "flush_mode=$flush_mode dirty_flush_thresh=$thresh"
+
+	mkdir $dir || error "mkdir $dir failed"
+	check_wbc_flags $dir "0x0000000f"
+
+	local i
+	local set1
+	local set2
+
+	for i in $(seq 1 $nr_level); do
+		set1+="$dir/$tfile.n1.$i "
+		set2+="$dir/$tfile.n2.$i "
+	done
+
+	touch $set1 || error "touch $set1 failed"
+	wbc_conf_show
+	touch $set2 || error "touch $set2 failed"
+	wbc_conf_show
+	$LFS wbc state $set1
+	sleep 3
+	$LFS wbc state $dir
+	echo "================="
+	$LFS wbc state $set2
+
+	sync
+
+	echo "SYNC ============="
+	$LFS wbc state $set1 $set2
+
+	rm -rf $dir || error "rm -rf $dir failed"
+}
+run_test 99a "Quantum flush algorithm for aging keep mode with single level"
+
+test_99b() {
+	local dir=$DIR/$tdir
+	local flush_mode="aging_keep"
+	local thresh=15
+	local nr_level=10
+	local nr_subdir=2
+
+	setup_wbc "flush_mode=$flush_mode dirty_flush_thresh=$thresh"
+	mkdir $dir || error "mkdir $dir failed"
+	check_wbc_flags $dir "0x0000000f"
+
+	local fileset
+	local subpath
+	local l
+	local i
+
+	for l in $(seq 1 $nr_subdir); do
+		subpath="$dir/$tdir.s$l"
+		mkdir $subpath || error "mkdir $subpath failed"
+		for i in $(seq 1 $nr_level); do
+			fileset+="$subpath/$tfile.s$l.i$i "
+		done
+	done
+
+	touch $fileset || error "touch $fileset failed"
+	$LFS wbc state $fileset
+	sync
+	echo "SYNC =========="
+	$LFS wbc state $fileset
+}
+run_test 99b "Quantum flush algorithm for aging keep mode with multiple levels"
+
+test_99c() {
+	local dir=$DIR/$tdir
+	local flush_mode="aging_keep"
+
+	setup_wbc "flush_mode=$flush_mode dirty_flush_thresh=20 flush_pol=batch max_batch_count=256"
+	#mkdir $dir || error "mkdir $dir failed"
+	#check_wbc_flags $dir "0x0000000f"
+
+	mpirun -np 8 --allow-run-as-root /root/share/ior/src/mdtest -u -n 1000 -C -r -F -Y -B 0 -d $dir
+	wbc_conf_show
+	$LCTL get_param mdc.*.batch_stats
+	cleanup_wbc
+	mpirun -np 8 --allow-run-as-root /root/share/ior/src/mdtest -u -n 1000 -C -r -F -Y -B 0 -d $dir
+	wbc_conf_show
+}
+run_test 99c "Quantum flush algorithm for aging keep mode by mdtest"
+
+test_99d() {
+	local dir=$DIR/$tdir
+
+
+	cd /root/share/benchmark/compilebench-0.6
+	./compilebench -D $dir -i 2 -r 10
+	rm -rf $dir || error "rm -rf $dir failed"
+	setup_wbc "flush_mode=lazy_keep"
+	./compilebench -D $dir -i 2 -r 10
+}
+run_test 99d "Benchmark for aging keep mode by using compilebench"
+
 test_100() {
 	local dir=$DIR/$tdir
 	local file1="$dir/$tfile.1"
