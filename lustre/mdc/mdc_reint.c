@@ -666,6 +666,9 @@ static int mdc_reint_async_interpret(const struct lu_env *env,
 	struct mdc_reint_args *aa = args;
 	struct md_op_item *item = aa->ra_item;
 
+	if (item->mop_flags & WBC_FL_FLOW_CONTROL)
+		obd_put_request_slot(&req->rq_import->imp_obd->u.cli);
+
 	return item->mop_cb(&req->rq_pill, item, rc);
 }
 
@@ -703,6 +706,14 @@ int mdc_reint_async(struct obd_export *exp, struct md_op_item *item,
 	req->rq_interpret_reply = mdc_reint_async_interpret;
 	aa = ptlrpc_req_async_args(aa, req);
 	aa->ra_item = item;
+
+	if (item->mop_flags & WBC_FL_FLOW_CONTROL) {
+		int rc;
+
+		rc = obd_get_request_slot(&req->rq_import->imp_obd->u.cli);
+		if (rc)
+			RETURN(rc);
+	}
 
 	if (rqset) {
 		ptlrpc_set_add_req(rqset, req);

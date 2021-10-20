@@ -254,12 +254,6 @@ struct wbc_context {
 #define ioc_batch	ioc_engine.ioe_batch
 #define ioc_rqset	ioc_engine.ioe_rqset
 
-enum wbc_control_flags {
-	WBC_FL_DECOMPLETE	= BIT(0),
-	WBC_FL_UNRSV_CHILDREN	= BIT(1),
-	WBC_FL_SYNC_NONE	= BIT(2),
-};
-
 /* Extend for the data structure writeback_control in Linux kernel */
 struct writeback_control_ext {
 	long nr_to_write;		/* Write this many pages, and decrement

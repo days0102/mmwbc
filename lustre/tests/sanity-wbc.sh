@@ -940,10 +940,10 @@ test_13_base() {
 }
 
 test_13() {
-	test_13_base "lazy_drop"
+	#test_13_base "lazy_drop"
 	test_13_base "lazy_keep"
-	test_13_base "aging_drop"
-	test_13_base "aging_keep"
+	#test_13_base "aging_drop"
+	#test_13_base "aging_keep"
 }
 run_test 13 "Verify fsync(2) works correctly for four flush modes"
 
@@ -1969,7 +1969,13 @@ test_31() {
 	mkdir $dir || error "mkdir $dir failed"
 	echo "Data_on_PCC" > $file || error "write $file failed"
 	$LFS wbc state $file
+	lctl set_param debug=trace
+	lctl set_param debug=+vfstrace
+	lctl set_param debug=+dentry
+	lctl set_param subsystem_debug=llite
+	lctl clear
 	wait_wbc_sync_state $file
+	lctl dk > log1
 	$LFS wbc state $file
 
 	sleep 10
@@ -1977,14 +1983,17 @@ test_31() {
 	$LFS pcc state $file
 	cat $file
 	$LFS pcc state $file
+	lctl clear
 	stat $DIR2/$tdir/$tfile
+	lctl dk > log2
+	$LFS wbc state $file
+	lctl dk > log3
 	$LFS hsm_state $file
 	$LFS getstripe $file
 	$LFS pcc state $file
 	$LFS pcc detach $file
 	cat $file
 	$LFS hsm_state $file
-
 }
 run_test 31 "DOP for aging_keep flush mode"
 
@@ -2008,16 +2017,19 @@ test_32() {
 
 	$LFS wbc state $fileset
 	sync
+	echo "1. Chek filset existed on MDT"
 	check_mdt_fileset_exist "$mdtset" 0 ||
 		error "'$fileset' should exist under ROOT on MDT"
 	$LFS wbc state $fileset
 	rm -f $fileset || error "rm -f $fileset failed"
 	$LFS wbc state $dir || error "$LFS wbc state $dir failed"
+	echo "2. Chek filset existed on MDT after unlink()"
 	check_mdt_fileset_exist "$mdtset" 0 ||
 		error "'$fileset' should exist under ROOT on MDT"
 	sleep 7
 	wait_wbc_uptodate $dir
 	$LFS wbc state $dir || error "$LFS wbc state $dir failed"
+	echo "3. Chek filset existed on MDT after updates"
 	check_mdt_fileset_exist "$mdtset" 1 ||
 		error "'$fileset' should not exist under ROOT on MDT"
 }
@@ -2175,12 +2187,27 @@ test_99d() {
 
 
 	cd /root/share/benchmark/compilebench-0.6
-	./compilebench -D $dir -i 2 -r 10
-	rm -rf $dir || error "rm -rf $dir failed"
-	setup_wbc "flush_mode=lazy_keep"
-	./compilebench -D $dir -i 2 -r 10
+	#./compilebench -D $dir -i 2 -r 2
+	#rm -rf $dir || error "rm -rf $dir failed"
+	setup_wbc "flush_mode=aging_keep"
+	./compilebench -D $dir -i 1 -r 4 -n --makej
+	$LFS wbc state $dir
 }
 run_test 99d "Benchmark for aging keep mode by using compilebench"
+
+test_99e() {
+	local dir=$DIR/$tdir
+	local flush_mode="aging_keep"
+
+	setup_wbc "flush_mode=$flush_mode"
+	#mkdir $dir || error "mkdir $dir failed"
+	#check_wbc_flags $dir "0x0000000f"
+
+	mpirun -np 8 --allow-run-as-root /root/share/ior/src/mdtest -u -n 1000 -C -F -Y -d $dir
+	$LFS wbc state $dir
+	wbc_conf_show
+}
+run_test 99e "Benchmark for aging keep mode using mdtest"
 
 test_100() {
 	local dir=$DIR/$tdir

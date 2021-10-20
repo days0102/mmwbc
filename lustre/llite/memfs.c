@@ -463,7 +463,6 @@ static int memfs_rmdir(struct inode *dir, struct dentry *dchild)
 
 	ENTRY;
 
-	printk("rmdir %pd\n", dchild);
 	down_read(&wbci->wbci_rw_sem);
 	if (wbc_inode_complete(wbci)) {
 		rc = memfs_remove_policy(dir, dchild, true);
@@ -505,7 +504,6 @@ static int memfs_unlink(struct inode *dir, struct dentry *dchild)
 
 	ENTRY;
 
-	printk("Unlink %pd\n", dchild);
 	down_read(&wbci->wbci_rw_sem);
 	if (wbc_inode_complete(wbci)) {
 		rc = memfs_remove_policy(dir, dchild, false);
@@ -721,7 +719,8 @@ static int memfs_fsync(struct file *file, loff_t start,
 	if (rc < 0)
 		RETURN(rc);
 
-	LASSERT(wbc_inode_written_out(wbci));
+	LASSERTF(wbc_inode_written_out(wbci), "%pd state %X\n",
+		 dentry, wbci->wbci_flags);
 	RETURN(ll_fsync(file, start, end, datasync));
 }
 

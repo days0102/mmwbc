@@ -1161,6 +1161,24 @@ have___bi_cnt, [
 ]) # LC_HAVE___BI_CNT
 
 #
+# LC_WB_HAS_DIRTY_IO
+#
+# Kernel version 4.1 commit d6c10f1fc8626dc55946f4768ae322b4c57b07dd
+# Implement WB_has_dirty_io wb_state flag
+#
+AC_DEFUN([LC_WB_HAS_DIRTY_IO], [
+LB_CHECK_COMPILE([if Linux kernel has WB_has_dirty_io wb_state flag],
+WB_has_dirty_io, [
+	#include <linux/backing-dev.h>
+],[
+	((struct bdi_writeback *)0)->state = WB_has_dirty_io;
+],[
+	AC_DEFINE(HAVE_WB_HAS_DIRTY_IO, 1,
+		[WB_has_dirty_io exist])
+])
+]) # LC_WB_HAS_DIRTY_IO
+
+#
 # LC_SYMLINK_OPS_USE_NAMEIDATA
 #
 # For the 4.2+ kernels the file system internal symlink api no
@@ -1996,6 +2014,24 @@ super_setup_bdi_name, [
 ]) # LC_SUPER_SETUP_BDI_NAME
 
 #
+# LC_PERCPU_COUNTER_ADD_BATCH
+#
+# Kernel version 4.12 commit 104b4e5139fe384431ac11c3b8a6cf4a529edf4a
+# Rename __percpu_counter_add to percpu_counter_add_batch
+#
+AC_DEFUN([LC_PERCPU_COUNTER_ADD_BATCH], [
+LB_CHECK_COMPILE([if 'percpu_counter_add_batch' exist],
+percpu_counter_add_batch, [
+	#include <linux/percpu_counter.h>
+],[
+	percpu_counter_add_batch(NULL, 0, 0);
+],[
+	AC_DEFINE(HAVE_PERCPU_COUNTER_ADD_BATCH, 1,
+		['percpu_counter_add_batch' is available])
+])
+]) # LC_PERCPU_COUNTER_ADD_BATCH
+
+#
 # LC_BI_STATUS
 #
 # 4.12 replace bi_error to bi_status
@@ -2511,6 +2547,7 @@ AC_DEFUN([LC_PROG_LINUX], [
 	LC_IOV_ITER_RW
 	LC_HAVE_SYNC_READ_WRITE
 	LC_HAVE___BI_CNT
+	LC_WB_HAS_DIRTY_IO
 
 	# 4.2
 	LC_BIO_ENDIO_USES_ONE_ARG
@@ -2578,6 +2615,7 @@ AC_DEFUN([LC_PROG_LINUX], [
 	LC_CURRENT_TIME
 	LC_SUPER_BLOCK_S_UUID
 	LC_SUPER_SETUP_BDI_NAME
+	LC_PERCPU_COUNTER_ADD_BATCH
 	LC_BI_STATUS
 
 	# 4.13

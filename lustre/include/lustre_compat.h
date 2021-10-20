@@ -627,4 +627,11 @@ static inline int simple_setattr_no_dirty(struct dentry *dentry,
 	return 0;
 }
 
+#ifndef HAVE_PERCPU_COUNTER_ADD_BATCH
+static inline void percpu_counter_add_batch(struct percpu_counter *fbc,
+					    s64 amount, s32 batch)
+{
+	__percpu_counter_add(fbc, amount, batch);
+}
+#endif
 #endif /* _LUSTRE_COMPAT_H */

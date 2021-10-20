@@ -392,8 +392,7 @@ static int wbc_fill_create_common(struct inode *dir,
 		 *   for this regular file unless it is necessary if file size
 		 *   is zero.
 		 */
-		if (!(it->it_flags & MDS_OPEN_PCC))
-			it->it_flags |= MDS_FMODE_WRITE;
+		it->it_flags |= MDS_FMODE_WRITE;
 	} else if (S_ISLNK(inode->i_mode)) {
 		it->it_create_mode = S_IFLNK | S_IRWXUGO;
 	}
@@ -626,7 +625,6 @@ static int wbc_create_lockless_cb(struct req_capsule *pill,
 
 	ENTRY;
 
-	printk("Create lockless %pd inode %p\n", dchild, dchild->d_inode);
 	LASSERTF(wbc_inode_has_protected(wbci) &&
 		 wbc_inode_reserved(wbci) &&
 		 wbc_inode_complete(ll_i2wbci(parent->d_inode)),
@@ -643,7 +641,6 @@ static int wbc_create_lockless_cb(struct req_capsule *pill,
 	if (rc)
 		GOTO(out_fini, rc);
 
-	printk("Instantiate %pd clob %p\n", dchild, ll_i2info(inode)->lli_clob);
 	spin_lock(&inode->i_lock);
 	wbci->wbci_flags |= WBC_STATE_FL_SYNC;
 	wbci->wbci_dirty_flags &= ~WBC_DIRTY_FL_FLUSHING;
@@ -653,7 +650,7 @@ static int wbc_create_lockless_cb(struct req_capsule *pill,
 		wbc_inode_unreserve_dput(inode, dchild);
 	}
 
-	LASSERT(wbci->wbci_flush_mode == WBC_FLUSH_AGING_KEEP);
+	LASSERT(wbc_mode_lock_keep(wbci));
 	if (S_ISREG(inode->i_mode) && item->mop_flags & WBC_FL_SYNC_NONE) {
 		/*
 		 * Mark the inode as dirty, and the kernel flusher thread will
@@ -852,12 +849,15 @@ int wbc_do_setattr(struct inode *inode, unsigned int valid)
 		       (s64)attr->ia_mtime.tv_sec, (s64)attr->ia_ctime.tv_sec,
 		       ktime_get_real_seconds());
 
+	attr->ia_valid &= ~ATTR_FILE;
+	/*
 	if (attr->ia_valid & ATTR_FILE) {
 		struct ll_file_data *fd = attr->ia_file->private_data;
 
 		if (fd->fd_lease_och)
 			op_data->op_bias |= MDS_TRUNC_KEEP_LEASE;
 	}
+	*/
 
 	ll_prep_md_op_data(op_data, inode, NULL, NULL, 0, 0,
 			   LUSTRE_OPC_ANY, NULL);
@@ -907,7 +907,7 @@ static inline int wbc_make_inode_assimilated(struct inode *inode)
 	rc = wbcfs_commit_cache_pages(inode);
 	up_write(&wbci->wbci_rw_sem);
 
-	return rc;
+	return rc > 0 ? 0 : rc;
 }
 
 static int wbc_sync_create(struct inode *inode, struct dentry *dchild)
@@ -1393,6 +1393,7 @@ int wbcfs_writeback_dir_child(struct inode *dir, struct dentry *child,
 			      struct writeback_control_ext *wbcx)
 {
 	struct inode *inode = child->d_inode;
+	struct wbc_inode *wbci = ll_i2wbci(inode);
 	struct ll_sb_info *sbi = ll_i2sbi(inode);
 	struct md_op_item *item;
 	unsigned int valid = 0;
@@ -1401,16 +1402,31 @@ int wbcfs_writeback_dir_child(struct inode *dir, struct dentry *child,
 
 	ENTRY;
 
-	printk("Writeback child %pd state %08X mode %d parent %pd:%08X\n",
-	       child, ll_i2wbci(inode)->wbci_flags, wbcx->sync_mode,
-	       child->d_parent, ll_i2wbci(dir)->wbci_flags);
 	opc = wbc_flush_opcode_get(inode, NULL, wbcx, &valid);
 	if (opc == MD_OP_NONE) {
 		rc = wbc_make_inode_assimilated(inode);
 		RETURN(rc);
+	} else if (opc == MD_OP_REMOVE_LOCKLESS) {
+		rc = wbc_do_rmfid(inode, valid);
+		spin_lock(&inode->i_lock);
+		LASSERT(wbci->wbci_flags & WBC_STATE_FL_WRITEBACK &&
+			wbci->wbci_dirty_flags & WBC_DIRTY_FL_FLUSHING);
+		wbci->wbci_dirty_flags &= ~WBC_DIRTY_FL_FLUSHING;
+		spin_unlock(&inode->i_lock);
+		wbc_inode_writeback_complete(inode);
+		RETURN(rc);
+	} else if (opc == MD_OP_SETATTR_LOCKLESS) {
+		rc = wbc_do_setattr(inode, valid);
+		spin_lock(&inode->i_lock);
+		LASSERT(wbci->wbci_flags & WBC_STATE_FL_WRITEBACK &&
+			wbci->wbci_dirty_flags & WBC_DIRTY_FL_FLUSHING);
+		wbci->wbci_dirty_flags &= ~WBC_DIRTY_FL_FLUSHING;
+		spin_unlock(&inode->i_lock);
+		wbc_inode_writeback_complete(inode);
+		RETURN(rc);
 	}
 
-	LASSERT(opc == MD_OP_CREATE_LOCKLESS || opc == MD_OP_SETATTR_LOCKLESS);
+	LASSERT(opc == MD_OP_CREATE_LOCKLESS);
 	item = wbc_prep_op_item(opc, dir, child, NULL, wbcx, valid);
 	if (IS_ERR(item))
 		RETURN(PTR_ERR(item));
@@ -1431,11 +1447,10 @@ int wbcfs_writeback_dir_child(struct inode *dir, struct dentry *child,
 			break;
 		}
 	} else {
+		item->mop_flags |= WBC_FL_FLOW_CONTROL;
 		rc = md_reint_async(sbi->ll_md_exp, item, NULL);
 	}
 
-	printk("Writeback child 2 %pd state %08X mode %d rc = %d\n",
-	       child, ll_i2wbci(inode)->wbci_flags, wbcx->sync_mode, rc);
 	RETURN(rc);
 }
 
@@ -1448,15 +1463,12 @@ static int wbc_inode_flush_lockless_async(struct inode *inode,
 
 	ENTRY;
 
-	printk("FLUSH lockless %p S %X\n", inode, ll_i2wbci(inode)->wbci_flags);
 	dentry = d_find_any_alias(inode);
 	if (!dentry)
 		RETURN(0);
 
 	dir = dentry->d_parent->d_inode;
 	rc = wbcfs_writeback_dir_child(dir, dentry, wbcx);
-	printk("FLUSH lockless EXIT %p %pd S %X\n",
-	       inode, dentry, ll_i2wbci(inode)->wbci_flags);
 	dput(dentry);
 	RETURN(rc);
 }
@@ -1471,9 +1483,7 @@ static int wbc_inode_flush_lockless_sync(struct inode *inode,
 
 	ENTRY;
 
-	printk("Flush SYNC IN wbcx for_callback %d\n", wbcx->for_callback);
 	opc = wbc_flush_opcode_get(inode, NULL, wbcx, &valid);
-	printk("Flush SYNC OUT wbcx for_callback %d\n", wbcx->for_callback);
 	switch (opc) {
 	case MD_OP_NONE:
 		rc = wbc_make_inode_assimilated(inode);

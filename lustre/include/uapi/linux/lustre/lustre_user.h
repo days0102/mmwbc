@@ -2882,6 +2882,13 @@ enum lu_wbc_dirty_flags {
 	WBC_DIRTY_FL_REMOVE	= 0x20,
 };
 
+enum lu_wbc_control_flags {
+	WBC_FL_DECOMPLETE	= 0x01,
+	WBC_FL_UNRSV_CHILDREN	= 0x02,
+	WBC_FL_SYNC_NONE	= 0x04,
+	WBC_FL_FLOW_CONTROL	= 0x08,
+};
+
 struct lu_wbc_state {
 	/* File mode. */
 	mode_t			wbcs_fmode;
