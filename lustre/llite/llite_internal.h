@@ -1793,8 +1793,8 @@ static inline bool ll_data_in_lustre(struct inode *inode)
 	if (wbc_inode_none(wbci) && lli->lli_clob != NULL)
 		return true;
 
-	if (wbc_inode_data_committed(wbci)) {
-		LASSERT(wbc_inode_has_protected(wbci) && lli->lli_clob != NULL);
+	if (wbc_inode_data_committed(wbci) && lli->lli_clob != NULL) {
+		LASSERT(wbc_inode_has_protected(wbci));
 		return true;
 	}
 

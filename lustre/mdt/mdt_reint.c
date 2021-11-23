@@ -634,6 +634,8 @@ static int mdt_create(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
 	if (!mdt_object_exists(parent))
 		GOTO(put_parent, rc = -ENOENT);
 
+	lockless = info->mti_parent_locked ||
+		   ma->ma_attr_flags & MDS_WBC_LOCKLESS;
 	/*
 	 * LU-10235: check if name exists locklessly first to avoid massive
 	 * lock recalls on existing directories.
@@ -641,11 +643,32 @@ static int mdt_create(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
 	rc = mdt_lookup_version_check(info, parent, &rr->rr_name,
 				      &info->mti_tmp_fid1, 1);
 	if (rc == 0) {
-		if (!restripe)
-			GOTO(put_parent, rc = -EEXIST);
+		if (lockless) {
+			struct lu_fid *child_fid = &info->mti_tmp_fid1;
 
-		rc = mdt_restripe(info, parent, &rr->rr_name, rr->rr_fid2, spec,
-				  ma);
+			/*
+			 * Conflict with delay removal. Unlink the child
+			 * object aready deleted here.
+			 * FIXME: handle remote object in DNE env.
+			 */
+			if (!fid_is_md_operative(child_fid))
+				GOTO(put_parent, rc = -EPERM);
+
+			ma->ma_need = MA_INODE;
+			ma->ma_valid = 0;
+			rc = mdo_unlink(info->mti_env, mdt_object_child(parent),
+					NULL, &rr->rr_name, ma, 0);
+			if (rc)
+				GOTO(put_parent, rc);
+
+			rc = -ENOENT;
+		} else {
+			if (!restripe)
+				GOTO(put_parent, rc = -EEXIST);
+
+			rc = mdt_restripe(info, parent, &rr->rr_name,
+					  rr->rr_fid2, spec, ma);
+		}
 	}
 
 	/* -ENOENT is expected here */
@@ -658,8 +681,6 @@ static int mdt_create(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
 	OBD_RACE(OBD_FAIL_MDS_CREATE_RACE);
 
 	lh = &info->mti_lh[MDT_LH_PARENT];
-	lockless = info->mti_parent_locked ||
-		   ma->ma_attr_flags & MDS_WBC_LOCKLESS;
 	if (!lockless) {
 		mdt_lock_pdo_init(lh, LCK_PW, &rr->rr_name);
 		rc = mdt_object_lock(info, parent, lh, MDS_INODELOCK_UPDATE);

@@ -1315,6 +1315,7 @@ static int mdt_create_unpack(struct mdt_thread_info *info)
 	rc = mdt_name_unpack(pill, &RMF_NAME, &rr->rr_name, 0);
 	if (rc < 0)
 		RETURN(rc);
+
 	if (S_ISLNK(attr->la_mode)) {
 		const char *tgt = NULL;
 
@@ -1845,6 +1846,7 @@ int mdt_batch_unpack(struct mdt_thread_info *info, __u32 op)
 	memset(&info->mti_rr, 0, sizeof(info->mti_rr));
 	switch (op) {
 	case BUT_GETATTR:
+	case BUT_EXLOCK_ONLY:
 		info->mti_dlm_req = req_capsule_client_get(info->mti_pill,
 							   &RMF_DLM_REQ);
 		if (info->mti_dlm_req == NULL)

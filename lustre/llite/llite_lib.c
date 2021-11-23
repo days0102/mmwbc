@@ -2670,6 +2670,8 @@ void ll_delete_inode(struct inode *inode)
 					   CL_FSYNC_DISCARD, 1);
 		else
 			wbc_free_inode_pages_final(inode, &inode->i_data);
+
+		wbc_inode_data_lru_del(inode);
 	}
 
 	ll_truncate_inode_pages_final(inode);

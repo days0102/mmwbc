@@ -149,8 +149,6 @@ static int mdt_create_lockless(struct tgt_session_info *tsi)
 		GOTO(put_child, rc);
 
 	if (ma->ma_valid & MA_LOV) {
-		LASSERT(info->mti_intent_lock ||
-		        ma->ma_attr_flags & MDS_WBC_LOCKLESS);
 		LASSERT(ma->ma_lmm_size != 0);
 		repbody->mbo_eadatasize = ma->ma_lmm_size;
 		if (S_ISREG(ma->ma_attr.la_mode))
@@ -522,7 +520,8 @@ int mdt_batch(struct tgt_session_info *tsi)
 
 			rc = mdt_batch_unpack(info, reqmsg->lm_opc);
 			if (rc) {
-				CERROR("Can't unpack subreq, rc = %d\n", rc);
+				CERROR("Can't unpack subreq opc = %u rc = %d\n",
+				       reqmsg->lm_opc, rc);
 				GOTO(out, rc);
 			}
 

@@ -174,7 +174,8 @@ struct wbc_conf {
 	__u32			wbcc_hiwm_inodes_count;
 	__u32			wbcc_hiwm_pages_count;
 
-	unsigned long		wbcc_dirty_flush_thresh;	
+	unsigned long		wbcc_dirty_flush_thresh;
+	bool			wbcc_active_data_writeback;
 };
 
 enum wbc_stat_item {
@@ -204,29 +205,6 @@ struct memfs_writeback {
 	unsigned long		 wb_dirty_flush_thresh;
 };
 
-struct wbc_super {
-	spinlock_t		 wbcs_lock;
-	__u64			 wbcs_generation;
-	struct wbc_conf		 wbcs_conf;
-	struct dentry		*wbcs_debugfs_dir;
-	struct list_head	 wbcs_roots;
-	struct list_head	 wbcs_lazy_roots;
-
-	/* For cache shrinking and reclaimation. */
-	/* LRU list head for reserved inodes. */
-	struct list_head	 wbcs_rsvd_inode_lru;
-	struct list_head	 wbcs_data_inode_lru;
-	spinlock_t		 wbcs_data_lru_lock;
-	struct task_struct	*wbcs_reclaim_task;
-
-	/* Writeback dirty inodes and cache pages in MemFS. */
-	struct memfs_writeback	 wbcs_mwb;
-};
-
-#ifndef I_SYNC_QUEUED
-#define I_SYNC_QUEUED		(1 << 17)
-#endif
-
 /* Anchor for synchronous transfer. */
 struct wbc_sync_io {
 	/** number of metadata updates yet to be transferred. */
@@ -253,6 +231,31 @@ struct wbc_context {
 
 #define ioc_batch	ioc_engine.ioe_batch
 #define ioc_rqset	ioc_engine.ioe_rqset
+
+struct wbc_super {
+	spinlock_t		 wbcs_lock;
+	__u64			 wbcs_generation;
+	struct wbc_conf		 wbcs_conf;
+	struct dentry		*wbcs_debugfs_dir;
+	struct list_head	 wbcs_roots;
+	struct list_head	 wbcs_lazy_roots;
+
+	/* For cache shrinking and reclaimation. */
+	/* LRU list head for reserved inodes. */
+	struct list_head	 wbcs_rsvd_inode_lru;
+	struct list_head	 wbcs_data_inode_lru;
+	spinlock_t		 wbcs_data_lru_lock;
+	struct task_struct	*wbcs_reclaim_task;
+
+	/* Writeback dirty inodes and cache pages in MemFS. */
+	struct memfs_writeback	 wbcs_mwb;
+	/* I/O context for all asynchronous I/Os. */
+	struct wbc_context	 wbcs_context;
+};
+
+#ifndef I_SYNC_QUEUED
+#define I_SYNC_QUEUED		(1 << 17)
+#endif
 
 /* Extend for the data structure writeback_control in Linux kernel */
 struct writeback_control_ext {
@@ -289,7 +292,8 @@ struct writeback_control_ext {
 	unsigned for_decomplete:1;	/* decomplete a WBC directory */
 	/* Unreserve all children from inode limit when decomplete parent. */
 	unsigned unrsv_children_decomp:1;
-	unsigned for_quantum_flush:1;
+	/* Parallel flush in background. */
+	unsigned for_pflush:1;
 	unsigned has_ioctx:1;
 	unsigned unused_bit0:1,
 		 unused_bit1:1,
@@ -390,6 +394,7 @@ enum wbc_cmd_op {
 	WBC_CMD_OP_MAX_NRPAGES_PER_FILE	= 0x0800,
 	WBC_CMD_OP_MAX_RMFID_COUNT	= 0x1000,
 	WBC_CMD_OP_DIRTY_FLUSH_THRESH	= 0x2000,
+	WBC_CMD_OP_ACTIVE_DATA_WRITEBACK	= 0x4000,
 };
 
 struct wbc_cmd {

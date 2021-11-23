@@ -311,7 +311,10 @@ int wbc_sync_io_wait(struct wbc_sync_io *anchor, long timeout)
 
 	/* We take the lock to ensure that cl_sync_io_note() has finished */
 	spin_lock(&anchor->wsi_waitq.lock);
-	LASSERT(atomic_read(&anchor->wsi_sync_nr) == 0);
+	if (atomic_read(&anchor->wsi_sync_nr) != 0)
+		CWARN("Pending number is %d, not zero\n",
+		      atomic_read(&anchor->wsi_sync_nr));
+	//LASSERT(atomic_read(&anchor->wsi_sync_nr) == 0);
 	spin_unlock(&anchor->wsi_waitq.lock);
 
 	RETURN(rc);
@@ -357,6 +360,12 @@ long wbc_flush_opcode_get(struct inode *inode, struct dentry *dchild,
 		if (wbcx->for_callback && inode->i_state & I_SYNC)
 			__inode_wait_for_writeback(inode);
 
+		if (wbcx->for_pflush &&
+		    (wbci->wbci_flags & WBC_STATE_FL_WRITEBACK)) {
+			spin_unlock(&inode->i_lock);
+			RETURN(MD_OP_NONE);
+		}
+
 		if (!wbcx->for_fsync &&
 		    wbci->wbci_flags & WBC_STATE_FL_WRITEBACK)
 			__wbc_inode_wait_for_writeback(inode);
@@ -378,7 +387,8 @@ long wbc_flush_opcode_get(struct inode *inode, struct dentry *dchild,
 			opc = MD_OP_NONE;
 			if (wbcx->unrsv_children_decomp)
 				wbc_inode_unreserve_dput(inode, dchild);
-		} else if (wbc_inode_remove_dirty(wbci)) {
+		} else if (wbc_inode_remove_dirty(wbci) &&
+			   !wbc_flush_need_exlock(wbci, wbcx)) {
 			LASSERT(S_ISDIR(inode->i_mode));
 			LASSERT(wbc_mode_lock_keep(wbci));
 			wbc_clear_dirty_for_flush(wbci, valid);
@@ -480,6 +490,12 @@ int wbc_make_inode_sync(struct dentry *dentry)
 		struct wbc_dentry *wbcd = ll_d2wbcd(dentry);
 
 		spin_lock(&inode->i_lock);
+		if (wbc_inode_written_out(wbci)) {
+			wbc_sync_addroot_lockdrop(wbci, wbcd, &fsync_list);
+			spin_unlock(&inode->i_lock);
+			break;
+		}
+
 		if (wbci->wbci_flags & WBC_STATE_FL_WRITEBACK) {
 			__wbc_inode_wait_for_writeback(inode);
 			LASSERT(wbc_inode_was_flushed(wbci));
@@ -1069,10 +1085,18 @@ int wbc_super_shrink_roots(struct wbc_super *super)
 
 int wbc_super_sync_fs(struct wbc_super *super, int wait)
 {
+	struct wbc_context *ctx = &super->wbcs_context;
+	int rc;
+
 	if (!wait)
 		return 0;
 
-	return __wbc_super_shrink_roots(super, &super->wbcs_lazy_roots);
+	rc = __wbc_super_shrink_roots(super, &super->wbcs_lazy_roots);
+	if (rc)
+		return rc;
+
+	rc = wbc_sync_io_wait(&ctx->ioc_anchor, 0);
+	return rc;
 }
 
 int wbc_write_inode(struct inode *inode, struct writeback_control *wbc)
@@ -1271,6 +1295,7 @@ static void wbc_super_reset_common_conf(struct wbc_conf *conf)
 	conf->wbcc_hiwm_ratio = WBC_DEFAULT_HIWM_RATIO;
 	conf->wbcc_hiwm_inodes_count = 0;
 	conf->wbcc_hiwm_pages_count = 0;
+	conf->wbcc_active_data_writeback = true;
 }
 
 /* called with @wbcs_lock hold. */
@@ -1376,6 +1401,10 @@ static int wbc_super_conf_update(struct wbc_super *super, struct wbc_conf *conf,
 			cmd->wbcc_conf.wbcc_dirty_flush_thresh;
 	}
 
+	if (cmd->wbcc_flags & WBC_CMD_OP_ACTIVE_DATA_WRITEBACK)
+		conf->wbcc_active_data_writeback =
+			cmd->wbcc_conf.wbcc_active_data_writeback;
+
 	return 0;
 }
 
@@ -1460,6 +1489,9 @@ int wbc_super_init(struct wbc_super *super, struct super_block *sb)
 	INIT_LIST_HEAD(&super->wbcs_rsvd_inode_lru);
 	INIT_LIST_HEAD(&super->wbcs_data_inode_lru);
 	spin_lock_init(&super->wbcs_data_lru_lock);
+
+	super->wbcs_context.ioc_anchor_used = 1;
+	wbc_sync_io_init(&super->wbcs_context.ioc_anchor, 0);
 
 	super->wbcs_reclaim_task = kthread_run(ll_wbc_reclaim_main, super,
 					       "ll_wbc_reclaimer");
@@ -1623,6 +1655,16 @@ static int wbc_parse_value_pair(struct wbc_cmd *cmd, char *buffer)
 
 		conf->wbcc_dirty_flush_thresh = num;
 		cmd->wbcc_flags |= WBC_CMD_OP_DIRTY_FLUSH_THRESH;
+	} else if (strcmp(key, "active_data_writeback") == 0 ||
+		   strcmp(key, "adw") == 0) {
+		bool result;
+
+		rc = kstrtobool(val, &result);
+		if (rc)
+			return rc;
+
+		conf->wbcc_active_data_writeback = result;
+		cmd->wbcc_flags |= WBC_CMD_OP_ACTIVE_DATA_WRITEBACK;
 	} else {
 		return -EINVAL;
 	}
@@ -1770,7 +1812,8 @@ static inline bool wbc_over_dirty_threshold(struct memfs_writeback *mwb)
 int wbc_workqueue_init(void)
 {
 	wbc_wq = alloc_workqueue("ll_writeback", WQ_MEM_RECLAIM | WQ_FREEZABLE |
-						 WQ_UNBOUND | WQ_SYSFS, 0);
+						 WQ_UNBOUND | WQ_HIGHPRI,
+						 num_online_cpus());
 	if (!wbc_wq)
 		return -ENOMEM;
 
@@ -2225,6 +2268,28 @@ static int __writeback_single_inode(struct inode *inode,
 	return ret;
 }
 
+static bool wbc_inode_check_parent(struct inode *inode)
+{
+	struct dentry *dentry;
+	struct dentry *parent;
+	struct wbc_inode *wbci;
+	bool result;
+
+	dentry = d_find_any_alias(inode);
+	if (dentry == NULL)
+		return false;
+
+	parent = dentry->d_parent;
+	wbci = ll_i2wbci(parent->d_inode);
+	if (wbci->wbci_flags == WBC_STATE_FL_NONE)
+		result = true;
+	else if (wbci->wbci_flags & WBC_STATE_FL_SYNC)
+		result = true;
+
+	dput(dentry);
+	return result;
+}
+
 /*
  * Write a portion of b_io inodes which belong to @sb.
  *
@@ -2265,6 +2330,9 @@ static long wbc_writeback_sb_inodes(struct super_block *sb,
 			break;
 		}
 
+		if (!wbc_inode_check_parent(inode))
+			break;
+
 		/*
 		 * Don't bother with new inodes or inodes being freed, first
 		 * kind does not need periodic writeout yet, and for the latter
@@ -2276,6 +2344,13 @@ static long wbc_writeback_sb_inodes(struct super_block *sb,
 			spin_unlock(&inode->i_lock);
 			continue;
 		}
+
+		if (inode->i_state & I_SYNC ||
+		    ll_i2wbci(inode)->wbci_flags & WBC_STATE_FL_WRITEBACK) {
+			spin_unlock(&inode->i_lock);
+			break;
+		}
+
 		spin_unlock(&wb->list_lock);
 
 		if (inode->i_state & I_SYNC) {
@@ -2373,11 +2448,14 @@ static int wb_writeback_parallel(struct memfs_writeback *mwb,
 			dget_dlock(child);
 			spin_unlock(&child->d_lock);
 			spin_unlock(&parent->d_lock);
-			rc = wbcfs_writeback_dir_child(parent->d_inode,
-						       child, wbcx);
+			if (!(child->d_inode->i_state & I_SYNC))
+				rc = wbcfs_writeback_dir_child(parent->d_inode,
+							       child, wbcx);
 			dput(child);
 			if (rc)
 				RETURN(rc);
+
+			cond_resched();
 			spin_lock(&parent->d_lock);
 		} else {
 			spin_unlock(&child->d_lock);
@@ -2425,7 +2503,7 @@ static void wbc_workfn(struct work_struct *work)
 		.nr_to_write		= 0,
 		.sync_mode		= WB_SYNC_NONE,
 		.for_background		= 1,
-		.for_quantum_flush	= 1,
+		.for_pflush	= 1,
 		.has_ioctx		= 1,
 	};
 	struct super_block *sb = mwb->wb_sb;

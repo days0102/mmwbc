@@ -2299,11 +2299,11 @@ static int mdt_rmfid_unlink(struct mdt_thread_info *info,
 	mutex_unlock(&obj->mot_lov_mutex);
 
 unlock_child:
-	if (!info->mti_parent_locked) {
+	if (!info->mti_parent_locked)
 		mdt_reint_striped_unlock(info, obj, child_lh, einfo, 1);
 unlock_parent:
+	if (!info->mti_parent_locked)
 		mdt_object_unlock(info, pobj, parent_lh, 1);
-	}
 put_parent:
 	mdt_object_put(info->mti_env, pobj);
 out:

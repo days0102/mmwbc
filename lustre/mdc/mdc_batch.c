@@ -707,8 +707,11 @@ out:
 }
 
 static void mdc_create_capsule_pack(struct req_capsule *pill,
-				    struct md_op_data *op_data)
+				    struct md_op_data *op_data,
+				    struct lookup_intent *it)
 {
+	int lmm_size = 0;
+
 	req_capsule_set_size(pill, &RMF_NAME, RCL_CLIENT,
 			     op_data->op_namelen + 1);
 	req_capsule_set_size(pill, &RMF_FILE_SECCTX_NAME,
@@ -718,7 +721,12 @@ static void mdc_create_capsule_pack(struct req_capsule *pill,
 			     op_data->op_file_secctx_size);
 	req_capsule_set_size(pill, &RMF_FILE_ENCCTX, RCL_CLIENT,
 			     op_data->op_file_encctx_size);
-	req_capsule_set_size(pill, &RMF_EADATA, RCL_CLIENT, 0);
+
+	if ((it->it_flags & MDS_OPEN_PCC || S_ISLNK(it->it_create_mode)) &&
+	    op_data->op_data && op_data->op_data_size)
+		lmm_size = op_data->op_data_size;
+
+	req_capsule_set_size(pill, &RMF_EADATA, RCL_CLIENT, lmm_size);
 }
 
 static int mdc_create_exlock_pack(struct batch_update_head *head,
@@ -738,7 +746,7 @@ static int mdc_create_exlock_pack(struct batch_update_head *head,
 
 	req_capsule_subreq_init(&pill, &RQF_BUT_CREATE_EXLOCK, NULL,
 				reqmsg, NULL, RCL_CLIENT);
-	mdc_create_capsule_pack(&pill, op_data);
+	mdc_create_capsule_pack(&pill, op_data, it);
 
 	size = req_capsule_msg_size(&pill, RCL_CLIENT);
 	if (unlikely(size >= *max_pack_size)) {
@@ -806,7 +814,7 @@ static int mdc_create_lockless_pack(struct batch_update_head *head,
 
 	req_capsule_subreq_init(&pill, &RQF_BUT_CREATE_LOCKLESS, NULL,
 				reqmsg, NULL, RCL_CLIENT);
-	mdc_create_capsule_pack(&pill, op_data);
+	mdc_create_capsule_pack(&pill, op_data, it);
 	size = req_capsule_msg_size(&pill, RCL_CLIENT);
 	if (unlikely(size >= *max_pack_size)) {
 		*max_pack_size = size;
@@ -970,7 +978,7 @@ static int mdc_exlock_only_pack(struct batch_update_head *head,
 		RETURN(rc);
 
 	req_capsule_set_replen(&pill);
-	reqmsg->lm_opc = BUT_SETATTR_LOCKLESS;
+	reqmsg->lm_opc = BUT_EXLOCK_ONLY;
 	*max_pack_size = size;
 	RETURN(rc);
 }

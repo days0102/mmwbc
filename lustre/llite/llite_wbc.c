@@ -615,6 +615,11 @@ static inline void wbc_prep_lockless_common(struct md_op_item *item, int it_op)
 	item->mop_data.op_bias |= MDS_WBC_LOCKLESS;
 }
 
+static inline bool wbc_active_data_writeback(struct inode *inode)
+{
+	return ll_i2wbcc(inode)->wbcc_active_data_writeback;
+}
+
 static int wbc_create_lockless_cb(struct req_capsule *pill,
 				  struct md_op_item *item, int rc)
 {
@@ -651,7 +656,8 @@ static int wbc_create_lockless_cb(struct req_capsule *pill,
 	}
 
 	LASSERT(wbc_mode_lock_keep(wbci));
-	if (S_ISREG(inode->i_mode) && item->mop_flags & WBC_FL_SYNC_NONE) {
+	if (S_ISREG(inode->i_mode) && item->mop_flags & WBC_FL_SYNC_NONE &&
+	    wbc_active_data_writeback(inode)) {
 		/*
 		 * Mark the inode as dirty, and the kernel flusher thread will
 		 * delay to do the assimilation work to commit the cache pages
@@ -659,11 +665,13 @@ static int wbc_create_lockless_cb(struct req_capsule *pill,
 		 */
 		mark_inode_dirty(inode);
 	} else if (S_ISDIR(inode->i_mode)) {
-		/* Queue the directory for parallel quantum flush. */
-		rc = wbc_queue_writeback_work(dchild);
-		if (rc)
-			CERROR("Queue work for %pd failed: rc = %d\n",
-			       dchild, rc);
+		if (ll_d2wbcd(dchild)->wbcd_dirent_num > 2) {
+			/* Queue the directory for parallel flush. */
+			rc = wbc_queue_writeback_work(dchild);
+			if (rc)
+				CERROR("Queue work for %pd failed: rc = %d\n",
+				       dchild, rc);
+		}
 	}
 
 out_fini:
@@ -975,6 +983,10 @@ static int wbc_sync_create(struct inode *inode, struct dentry *dchild)
 	ll_update_times(request, dir);
 
 	rc = ll_prep_inode(&inode, &request->rq_pill, dchild->d_sb, NULL);
+	if (S_ISREG(inode->i_mode))
+		LASSERTF(ll_i2info(inode)->lli_clob, "%pd %p, rc = %d\n",
+			 dchild, inode, rc);
+
 	ptlrpc_req_finished(request);
 out:
 	if (lum != NULL)
@@ -1152,6 +1164,13 @@ static int wbc_commit_data_pcc(struct inode *inode)
 
 	ENTRY;
 
+	/*
+	 * The file data has already assimilated from MemFS into Lustre
+	 * or PCC.
+	 */
+	if (wbc_inode_data_committed(wbci) || wbc_inode_none(wbci))
+		RETURN(0);
+
 	rc = pcc_wbc_commit_data(inode, wbci->wbci_archive_id);
 	if (rc < 0)
 		RETURN(rc);
@@ -1201,7 +1220,7 @@ static int wbc_commit_data_lustre(struct inode *inode)
 		RETURN(0);
 
 	isize = i_size_read(inode);
-	LASSERT(ll_i2info(inode)->lli_clob);
+	LASSERTF(ll_i2info(inode)->lli_clob, "inode %p\n", inode);
 
 	/* Get IO environment */
 	rc = cl_io_get(inode, &env, &io, &refcheck);
@@ -1377,7 +1396,9 @@ void wbc_free_inode_pages_final(struct inode *inode,
 	struct wbc_inode *wbci = ll_i2wbci(inode);
 
 	if (wbc_inode_has_protected(wbci)) {
-		LASSERT(!wbc_inode_data_committed(wbci));
+		if (wbc_inode_data_committed(wbci)) {
+			LASSERT(wbc_cache_mode_dop(wbci));
+		}
 
 		if (inode->i_nlink) {
 			(void) wbcfs_commit_cache_pages(inode);
@@ -1395,16 +1416,21 @@ int wbcfs_writeback_dir_child(struct inode *dir, struct dentry *child,
 	struct inode *inode = child->d_inode;
 	struct wbc_inode *wbci = ll_i2wbci(inode);
 	struct ll_sb_info *sbi = ll_i2sbi(inode);
+	struct wbc_context *ctx;
 	struct md_op_item *item;
 	unsigned int valid = 0;
 	long opc;
-	int rc;
+	int rc = 0;
 
 	ENTRY;
 
 	opc = wbc_flush_opcode_get(inode, NULL, wbcx, &valid);
 	if (opc == MD_OP_NONE) {
-		rc = wbc_make_inode_assimilated(inode);
+		if (wbcx->for_pflush)
+			RETURN(0);
+
+		if (wbc_active_data_writeback(inode))
+			rc = wbc_make_inode_assimilated(inode);
 		RETURN(rc);
 	} else if (opc == MD_OP_REMOVE_LOCKLESS) {
 		rc = wbc_do_rmfid(inode, valid);
@@ -1431,6 +1457,9 @@ int wbcfs_writeback_dir_child(struct inode *dir, struct dentry *child,
 	if (IS_ERR(item))
 		RETURN(PTR_ERR(item));
 
+	ctx = &sbi->ll_wbc_super.wbcs_context;
+	atomic_inc(&ctx->ioc_anchor.wsi_sync_nr);
+	item->mop_cbdata = ctx;
 	if (wbcx->has_ioctx) {
 		struct wbc_context *ctx = &wbcx->context;
 
@@ -1449,6 +1478,11 @@ int wbcfs_writeback_dir_child(struct inode *dir, struct dentry *child,
 	} else {
 		item->mop_flags |= WBC_FL_FLOW_CONTROL;
 		rc = md_reint_async(sbi->ll_md_exp, item, NULL);
+	}
+
+	if (rc) {
+		CERROR("Failed to flush file %pd\n", child);
+		wbc_fini_op_item(item, rc);
 	}
 
 	RETURN(rc);
@@ -1497,7 +1531,8 @@ static int wbc_inode_flush_lockless_sync(struct inode *inode,
 		if (rc == 0)
 			wbci->wbci_flags |= WBC_STATE_FL_SYNC;
 		spin_unlock(&inode->i_lock);
-		wbc_inode_writeback_complete(inode);
+		if (!wbcx->for_fsync)
+			wbc_inode_writeback_complete(inode);
 		break;
 	case MD_OP_SETATTR_LOCKLESS: {
 		rc = wbc_do_setattr(inode, valid);
@@ -1721,8 +1756,10 @@ int wbcfs_flush_dir_child(struct wbc_context *ctx, struct inode *dir,
 		RETURN(0);
 
 	item = wbc_prep_op_item(opc, dir, dchild, lock, wbcx, valid);
-	if (IS_ERR(item))
+	if (IS_ERR(item)) {
+		CERROR("prepare op item failed: rc = %ld\n", PTR_ERR(item));
 		RETURN(PTR_ERR(item));
+	}
 
 	if (md_opcode_need_exlock(opc))
 		item->mop_einfo.ei_mode = LCK_EX;
@@ -1998,7 +2035,10 @@ static int wbc_conf_seq_show(struct seq_file *m, void *v)
 		   conf->wbcc_dirty_flush_thresh);
 	seq_printf(m, "inodes_dirty: %lu\n",
 		   (unsigned long)wbc_stat_sum(ll_s2mwb(sb), WB_INODE_DIRTY));
-
+	seq_printf(m, "max_nrpages_per_file: %lu\n",
+		   conf->wbcc_max_nrpages_per_file);
+	seq_printf(m, "active_data_writeback: %d\n",
+		   conf->wbcc_active_data_writeback);
 	return 0;
 }
 

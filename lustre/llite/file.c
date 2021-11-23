@@ -5344,13 +5344,13 @@ int ll_inode_permission(struct inode *inode, int mask)
 	 * as root inode are NOT getting validated in lookup operation,
 	 * need to do it before permission check.
 	 */
-
+#if 0
 	if (is_root_inode(inode)) {
 		rc = ll_inode_revalidate(inode->i_sb->s_root, IT_LOOKUP);
 		if (rc)
 			RETURN(rc);
 	}
-
+#endif
 	CDEBUG(D_VFSTRACE, "VFS Op:inode="DFID"(%p), inode mode %x mask %o\n",
 	       PFID(ll_inode2fid(inode)), inode, inode->i_mode, mask);
 

@@ -941,9 +941,9 @@ test_13_base() {
 
 test_13() {
 	#test_13_base "lazy_drop"
-	test_13_base "lazy_keep"
+	#test_13_base "lazy_keep"
 	#test_13_base "aging_drop"
-	#test_13_base "aging_keep"
+	test_13_base "aging_keep"
 }
 run_test 13 "Verify fsync(2) works correctly for four flush modes"
 
@@ -1965,8 +1965,9 @@ test_31() {
 
 	sysctl -w vm.dirty_expire_centisecs=500
 	sysctl -w vm.dirty_writeback_centisecs=400
-	setup_wbc "cache_mode=dop flush_mode=aging_keep"
+	setup_wbc "cache_mode=dop flush_mode=aging_keep max_nrpages_per_file=16"
 	mkdir $dir || error "mkdir $dir failed"
+	ior -b 10M -r -w -t 4K -o $file
 	echo "Data_on_PCC" > $file || error "write $file failed"
 	$LFS wbc state $file
 	lctl set_param debug=trace
@@ -2169,11 +2170,12 @@ test_99c() {
 	local dir=$DIR/$tdir
 	local flush_mode="aging_keep"
 
-	setup_wbc "flush_mode=$flush_mode dirty_flush_thresh=20 flush_pol=batch max_batch_count=256"
+	setup_wbc "flush_mode=$flush_mode dirty_flush_thresh=256"
+	#setup_wbc "flush_mode=$flush_mode dirty_flush_thresh=20 flush_pol=batch max_batch_count=256"
 	#mkdir $dir || error "mkdir $dir failed"
 	#check_wbc_flags $dir "0x0000000f"
 
-	mpirun -np 8 --allow-run-as-root /root/share/ior/src/mdtest -u -n 1000 -C -r -F -Y -B 0 -d $dir
+	mpirun -np 32 --allow-run-as-root --oversubscribe /root/share/ior/src/mdtest -u -n 3000 -C -r -D -Y -d $dir
 	wbc_conf_show
 	$LCTL get_param mdc.*.batch_stats
 	cleanup_wbc
@@ -2184,7 +2186,6 @@ run_test 99c "Quantum flush algorithm for aging keep mode by mdtest"
 
 test_99d() {
 	local dir=$DIR/$tdir
-
 
 	cd /root/share/benchmark/compilebench-0.6
 	#./compilebench -D $dir -i 2 -r 2
@@ -2208,6 +2209,70 @@ test_99e() {
 	wbc_conf_show
 }
 run_test 99e "Benchmark for aging keep mode using mdtest"
+
+test_99f() {
+	local dir=$DIR/$tdir
+
+	setup_wbc "flush_mode=lazy_keep flush_pol=batch max_batch_count=256"
+
+	/root/share/ior/src/mdtest -n 10000 -C -F -d $dir
+	stat $DIR2/$tdir/test-dir.0-0/mdtest_tree.0
+	$LCTL get_param mdc.*.batch_stats
+}
+run_test 99f "Panic on batch flush for EX WBC lock callback"
+
+test_99g() {
+	local dir=$DIR/$tdir
+
+	setup_wbc "flush_mode=aging_keep flush_pol=batch max_batch_count=32"
+
+	/root/share/ior/src/mdtest -n 128 -C -F -Y -d $dir
+	stat $DIR2/$tdir/test-dir.0-0/mdtest_tree.0
+	$LCTL get_param mdc.*.batch_stats
+}
+run_test 99g "Panic on batch flush for EX WBC lock callback"
+
+test_99h() {
+	local dir=$DIR/$tdir
+
+	setup_wbc "flush_mode=aging_keep rmpol=subtree"
+
+	/root/share/ior/src/mdtest -n 128 -C -F -Y -d $dir
+	#stat $DIR2/$tdir/test-dir.0-0/mdtest_tree.0
+	rm -r $dir
+	$LCTL get_param mdc.*.batch_stats
+}
+run_test 99h "Dead lock for subtree removal policy"
+
+test_99i() {
+	local dir=$DIR/$tdir
+
+	cd /root/share/benchmark/compilebench-0.6
+	#./compilebench -D $dir -i 2 -r 2
+	#rm -rf $dir || error "rm -rf $dir failed"
+	setup_wbc "flush_mode=aging_keep"
+	./compilebench -D $dir -i 2 -r 4
+	$LFS wbc state $dir
+}
+run_test 99i "Symlink test for aging keep mode by using compilebench"
+
+test_99j() {
+	local dir=$DIR/$tdir
+
+	setup_wbc "flush_mode=aging_keep rmpol=subtree"
+
+	filebench -f varmail.f
+}
+run_test 99j "varmail test by using filebench"
+
+test_99k() {
+	local dir=$DIR/$tdir
+
+	#setup_wbc "flush_mode=aging_keep rmpol=subtree"
+
+	filebench -f webserver.f
+}
+run_test 99k "varmail test by using filebench"
 
 test_100() {
 	local dir=$DIR/$tdir
