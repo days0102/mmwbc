@@ -186,10 +186,13 @@ lutf_rc_t python_init(void)
 
 	swprintf(program, 3, L"%hs", "lutf");
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 	//char *path;
 	//char new_path[MAX_STR_LEN];
 	Py_SetProgramName(program);
 	//char *py_args[1];
+#pragma GCC diagnostic pop
 
 	//py_args[0] = argv[0];
 

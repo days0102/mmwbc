@@ -4681,8 +4681,11 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct fiemap *)0)->fm_reserved));
 	LASSERTF((int)offsetof(struct fiemap, fm_extents) == 32, "found %lld\n",
 		 (long long)(int)offsetof(struct fiemap, fm_extents));
-	LASSERTF((int)sizeof(((struct fiemap *)0)->fm_extents) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct fiemap *)0)->fm_extents));
+	// LASSERTF((int)sizeof(((struct fiemap *)0)->fm_extents) == 0, "found %lld\n",
+	// 	 (long long)(int)sizeof(((struct fiemap *)0)->fm_extents));
+	LASSERTF(sizeof(struct fiemap) == offsetof(struct fiemap, fm_extents),
+         "struct fiemap ends at fm_extents: found %lld\n",
+         (long long)sizeof(struct fiemap));
 	BUILD_BUG_ON(FIEMAP_FLAG_SYNC != 0x00000001);
 	BUILD_BUG_ON(FIEMAP_FLAG_XATTR != 0x00000002);
 	BUILD_BUG_ON(FIEMAP_FLAG_DEVICE_ORDER != 0x40000000);

@@ -58,13 +58,13 @@ int lprocfs_seq_release(struct inode *inode, struct file *file)
 }
 EXPORT_SYMBOL(lprocfs_seq_release);
 
-static umode_t default_mode(const struct proc_ops *ops)
+static umode_t default_mode(const struct file_operations *ops)
 {
 	umode_t mode = 0;
 
-	if (ops->proc_read)
+	if (ops->read)
 		mode = 0444;
-	if (ops->proc_write)
+	if (ops->write)
 		mode |= 0200;
 
 	return mode;
@@ -72,7 +72,7 @@ static umode_t default_mode(const struct proc_ops *ops)
 
 struct proc_dir_entry *
 lprocfs_add_simple(struct proc_dir_entry *root, char *name,
-		   void *data, const struct proc_ops *fops)
+		   void *data, const struct file_operations *fops)
 {
 	struct proc_dir_entry *proc;
 	umode_t mode;
@@ -147,7 +147,7 @@ void ldebugfs_add_vars(struct dentry *parent, struct ldebugfs_vars *list,
 }
 EXPORT_SYMBOL_GPL(ldebugfs_add_vars);
 
-static const struct proc_ops lprocfs_empty_ops = { };
+static const struct file_operations lprocfs_empty_ops = { };
 
 /**
  * Add /proc entries.
@@ -1421,13 +1421,13 @@ const struct file_operations ldebugfs_stats_seq_fops = {
 };
 EXPORT_SYMBOL(ldebugfs_stats_seq_fops);
 
-static const struct proc_ops lprocfs_stats_seq_fops = {
-	PROC_OWNER(THIS_MODULE)
-	.proc_open	= lprocfs_stats_seq_open,
-	.proc_read	= seq_read,
-	.proc_write	= lprocfs_stats_seq_write,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= lprocfs_seq_release,
+static const struct file_operations lprocfs_stats_seq_fops = {
+	.owner   = THIS_MODULE,
+	.open	= lprocfs_stats_seq_open,
+	.read	= seq_read,
+	.write	= lprocfs_stats_seq_write,
+	.llseek	= seq_lseek,
+	.release	= lprocfs_seq_release,
 };
 
 int lprocfs_register_stats(struct proc_dir_entry *root, const char *name,
@@ -1856,14 +1856,14 @@ EXPORT_SYMBOL(lprocfs_find_named_value);
 int lprocfs_seq_create(struct proc_dir_entry *parent,
 		       const char *name,
 		       mode_t mode,
-		       const struct proc_ops *seq_fops,
+		       const struct file_operations *seq_fops,
 		       void *data)
 {
 	struct proc_dir_entry *entry;
 	ENTRY;
 
 	/* Disallow secretly (un)writable entries. */
-	LASSERT(!seq_fops->proc_write == !(mode & 0222));
+	LASSERT(!seq_fops->write == !(mode & 0222));
 
 	entry = proc_create_data(name, mode, parent, seq_fops, data);
 
@@ -1877,7 +1877,7 @@ EXPORT_SYMBOL(lprocfs_seq_create);
 int lprocfs_obd_seq_create(struct obd_device *obd,
 			   const char *name,
 			   mode_t mode,
-			   const struct proc_ops *seq_fops,
+			   const struct file_operations *seq_fops,
 			   void *data)
 {
 	return lprocfs_seq_create(obd->obd_proc_entry, name,
