@@ -1,0 +1,18 @@
+config LUSTRE_FS
+      tristate "Lustre filesystem support"
+      help
+        Lustre is a scalable, secure, robust, highly-available cluster file system.
+
+config LUSTRE_CLIENT
+    bool "Lustre Client"
+	  depends on LUSTRE_FS
+    default y
+    help
+      Enable the Lustre client support.
+
+config LUSTRE_SERVER
+    bool "Lustre Server"
+	  depends on LUSTRE_FS
+    default y
+    help
+      Enable Lustre server support.
