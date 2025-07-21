@@ -477,9 +477,15 @@ static int enable_default_ext4_features(struct mkfs_opts *mop, char *anchor,
 			      "extents", NULL, maxbuflen);
 		append_unique(anchor, ",", "uninit_bg", NULL, maxbuflen);
 	} else if (IS_MDT(&mop->mo_ldd)) {
-		append_unique(anchor, user_spec ? "," : " -O ",
-			      "dirdata", NULL, maxbuflen);
-		append_unique(anchor, ",", "uninit_bg", NULL, maxbuflen);
+		/**
+		 * @brief mke2fs -O dirdata,uninit_bg,^extents,dir_nlink,quota,project,huge_file,ea_inode,large_dir,flex_bg 设置了无效的文件系统选项：dirdata
+		 * Notice: dirdata 在 (e2fsprogs 1.47.0-2.4) mkfs 存在问题，
+		 * 暂时注释关闭，以正常使用
+		 */
+		// append_unique(anchor, user_spec ? "," : " -O ",
+		// 	      "dirdata", NULL, maxbuflen);
+		// append_unique(anchor, ",", "uninit_bg", NULL, maxbuflen);
+		append_unique(anchor, user_spec ? "," : " -O ", "uninit_bg", NULL, maxbuflen);
 		if (enable_64bit)
 			append_unique(anchor, ",", "extents", NULL, maxbuflen);
 		else

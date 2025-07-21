@@ -137,3 +137,12 @@ doxygen.*
 *.img
 # Lustre 挂载目录
 script/mnt/
+
+lustre/tests/expand_truncate_test
+lustre/tests/foreign_symlink_striping
+lustre/tests/lov_getstripe_old
+lustre/tests/lutf/src/lutf
+lustre/utils/l_foreign_symlink
+
+compile_commands.json
+/.vscode

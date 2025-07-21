@@ -1,3 +1,9 @@
+lustre (2.14.51-1) unstable; urgency=low
+
+  * Automated changelog entry update
+
+ -- Andreas Dilger <adilger@whamcloud.com>  Mon, 21 Jul 2025 15:11:23 +0800
+
 lustre (2.14.51-214-g917f280-dirty-1) unstable; urgency=low
 
   * Automated changelog entry update
