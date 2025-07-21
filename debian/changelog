@@ -1,3 +1,15 @@
+lustre (2.14.51-214-g917f280-dirty-1) unstable; urgency=low
+
+  * Automated changelog entry update
+
+ -- Andreas Dilger <adilger@whamcloud.com>  Sun, 20 Jul 2025 16:01:31 +0800
+
+lustre (2.14.51-213-gf44733f-dirty-1) unstable; urgency=low
+
+  * Automated changelog entry update
+
+ -- Andreas Dilger <adilger@whamcloud.com>  Sun, 20 Jul 2025 15:56:42 +0800
+
 lustre (2.14.51-212-ge462d20-1) unstable; urgency=low
 
   * Automated changelog entry update

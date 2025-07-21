@@ -279,6 +279,7 @@ debs: undef.h
 	fi; \
 	if test "x@systemdsystemunitdir@" != "x"; then \
 		export DEB_BUILD_PROFILES="$${DEB_BUILD_PROFILES} systemd"; \
+		export SYSTEMD_OPTIONS="--with-systemdsystemunitdir=@systemdsystemunitdir@"; \
 	fi; \
 	export KERNEL_OBJ="$(LINUX_OBJ)"; \
 	export KERNEL_SRC="$(LINUX)"; \

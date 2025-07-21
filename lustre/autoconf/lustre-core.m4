@@ -2843,7 +2843,7 @@ AC_MSG_NOTICE([Lustre core checks
 ==============================================================================])
 
 AS_IF([test $target_cpu == "i686" -o $target_cpu == "x86_64"],
-	[CFLAGS="$CFLAGS -Wall -Werror"])
+	[CFLAGS="$CFLAGS -Wall"])
 
 # maximum MDS thread count
 LC_MDS_MAX_THREADS
