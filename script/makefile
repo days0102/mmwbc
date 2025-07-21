@@ -7,7 +7,7 @@ IP := $(shell ip addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.
 	| tr '\n' ' ' | awk '{print $$1}')
 LOOP_DEVICES := /dev/loop30 /dev/loop31 /dev/loop32
 IMG_FILES := lustre-mgt.img lustre-mdt.img lustre-ost.img
-MOUNT_POINTS := mnt/lustre/mgt mnt/lustre/mdt mnt/lustre/ost mnt/lustre/client
+MOUNT_POINTS := mgt mdt ost client
 
 # Default target
 example: check_ip configure mount
@@ -32,8 +32,8 @@ configure: build_loop mkfs
 build_images: 
 	@echo "build images..."
 	sudo dd if=/dev/zero of=lustre-mgt.img bs=1M count=256
-	sudo dd if=/dev/zero of=lustre-mdt.img bs=1M count=1024
-	sudo dd if=/dev/zero of=lustre-ost.img bs=1M count=1024
+	sudo dd if=/dev/zero of=lustre-mdt.img bs=2M count=1024
+	sudo dd if=/dev/zero of=lustre-ost.img bs=2M count=1024
 
 # Set loop devices
 build_loop:
@@ -66,31 +66,31 @@ mount: mount_mgt mount_mdt mount_ost mount_client
 
 mount_mgt:
 	@echo "start mount mgt..."
-	sudo mkdir -p mnt/lustre/mgt
-	sudo mount -t lustre /dev/loop30 mnt/lustre/mgt
+	mkdir -p mgt
+	sudo mount -t lustre /dev/loop30 mgt
 
 mount_mdt:
 	@echo "start mount mdt..."
-	sudo mkdir -p mnt/lustre/mdt
-	sudo mount -t lustre /dev/loop31 mnt/lustre/mdt
+	mkdir -p mdt
+	sudo mount -t lustre /dev/loop31 mdt
 
 mount_ost:
 	@echo "start mount ost..."
-	sudo mkdir -p mnt/lustre/ost
-	sudo mount -t lustre /dev/loop32 mnt/lustre/ost
+	mkdir -p ost
+	sudo mount -t lustre /dev/loop32 ost
 
 mount_client:
 	@echo "start mount client..."
-	sudo mkdir -p mnt/lustre/client
-	sudo mount -t lustre $(IP)@tcp:/lustrefs mnt/lustre/client
+	mkdir -p client
+	sudo mount -t lustre $(IP)@tcp:/lustrefs client
 
 # Clean up
 remove:
 	@echo "cleaning up..."
-	sudo umount mnt/lustre/client || true
-	sudo umount mnt/lustre/ost || true
-	sudo umount mnt/lustre/mdt || true
-	sudo umount mnt/lustre/mgt || true
+	sudo umount client || true
+	sudo umount ost || true
+	sudo umount mdt || true
+	sudo umount mgt || true
 	sudo losetup -d /dev/loop30 || true
 	sudo losetup -d /dev/loop31 || true
 	sudo losetup -d /dev/loop32 || true

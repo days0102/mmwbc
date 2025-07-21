@@ -137,6 +137,10 @@ doxygen.*
 *.img
 # Lustre 挂载目录
 script/mnt/
+script/client/
+script/mgt/
+script/mdt/
+script/ost/
 
 lustre/tests/expand_truncate_test
 lustre/tests/foreign_symlink_striping
