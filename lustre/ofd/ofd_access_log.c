@@ -341,6 +341,8 @@ unsigned int oal_file_poll(struct file *filp, struct poll_table_struct *wait)
 	return mask;
 }
 
+#pragma GCC push_options
+#pragma GCC optimize ("O1")
 static long oal_ioctl_info(struct oal_circ_buf *ocb, unsigned long arg)
 {
 	struct ofd_access_log *oal = ocb->ocb_access_log;
@@ -391,6 +393,7 @@ static long oal_ioctl_info(struct oal_circ_buf *ocb, unsigned long arg)
 
 	return 0;
 }
+#pragma GCC pop_options
 
 static long oal_file_ioctl(struct file *filp, unsigned int cmd,
 			unsigned long arg)

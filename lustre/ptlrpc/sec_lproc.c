@@ -135,6 +135,8 @@ out:
 
 LDEBUGFS_SEQ_FOPS_RO(sptlrpc_ctxs_lprocfs);
 
+#pragma GCC push_options
+#pragma GCC optimize ("O1")
 #if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2, 16, 53, 0)
 static ssize_t sepol_seq_write_old(struct obd_device *obd,
 				   const char __user *buffer,
@@ -310,6 +312,7 @@ out:
 	return rc ? rc : count;
 }
 LDEBUGFS_FOPS_WR_ONLY(srpc, sptlrpc_sepol);
+#pragma GCC pop_options
 
 int sptlrpc_lprocfs_cliobd_attach(struct obd_device *obd)
 {

@@ -2115,6 +2115,8 @@ out:
 	return rc;
 }
 
+#pragma GCC push_options
+#pragma GCC optimize ("O1")
 static int mdc_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
 			 void *karg, void __user *uarg)
 {
@@ -2231,6 +2233,7 @@ out:
 
 	return rc;
 }
+#pragma GCC pop_options
 
 static int mdc_get_info_rpc(struct obd_export *exp,
 			    u32 keylen, void *key,

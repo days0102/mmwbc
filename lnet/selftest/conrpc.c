@@ -458,6 +458,8 @@ lstcon_rpc_trans_stat(struct lstcon_rpc_trans *trans,
                stat->trs_rpc_errno, stat->trs_fwk_errno);
 }
 
+#pragma GCC push_options
+#pragma GCC optimize ("O1")
 int
 lstcon_rpc_trans_interpreter(struct lstcon_rpc_trans *trans,
 			     struct list_head __user *head_up,
@@ -531,6 +533,7 @@ lstcon_rpc_trans_interpreter(struct lstcon_rpc_trans *trans,
 
 	return 0;
 }
+#pragma GCC pop_options
 
 void
 lstcon_rpc_trans_destroy(struct lstcon_rpc_trans *trans)

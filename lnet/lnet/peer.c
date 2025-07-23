@@ -3922,6 +3922,8 @@ int lnet_get_peer_ni_info(__u32 peer_index, __u64 *nid,
 	return found ? 0 : -ENOENT;
 }
 
+#pragma GCC push_options
+#pragma GCC optimize ("O1")
 /* ln_api_mutex is held, which keeps the peer list stable */
 int lnet_get_peer_info(struct lnet_ioctl_peer_cfg *cfg, void __user *bulk)
 {
@@ -4044,6 +4046,7 @@ out_lp_decref:
 out:
 	return rc;
 }
+#pragma GCC pop_options
 
 /* must hold net_lock/0 */
 void

@@ -45,6 +45,8 @@ static inline int wbc_ioctl_unreserve(struct dentry *dchild,
 	return rc;
 }
 
+#pragma GCC push_options
+#pragma GCC optimize ("O1")
 long wbc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct inode *inode = file_inode(file);
@@ -113,6 +115,7 @@ out_unrsv_free:
 		RETURN(-ENOTTY);
 	}
 }
+#pragma GCC pop_options
 
 void wbcfs_inode_operations_switch(struct inode *inode)
 {

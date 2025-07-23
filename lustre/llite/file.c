@@ -2371,6 +2371,8 @@ out:
 	RETURN(rc);
 }
 
+#pragma GCC push_options
+#pragma GCC optimize ("O1")
 static int ll_lov_setea(struct inode *inode, struct file *file,
 			void __user *arg)
 {
@@ -5324,6 +5326,7 @@ out:
 	OBD_FREE_LARGE(fiemap, num_bytes);
 	return rc;
 }
+#pragma GCC pop_options
 
 int ll_inode_permission(struct inode *inode, int mask)
 {

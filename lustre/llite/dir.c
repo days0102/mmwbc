@@ -1001,7 +1001,8 @@ progress:
 	RETURN(rc != 0 ? rc : rc2);
 }
 
-
+#pragma GCC push_options
+#pragma GCC optimize ("O1")
 static int copy_and_ct_start(int cmd, struct obd_export *exp,
 			     const struct lustre_kernelcomm __user *data)
 {
@@ -2212,6 +2213,7 @@ out_detach:
 				     (void __user *)arg));
 	}
 }
+#pragma GCC pop_options
 
 static loff_t ll_dir_seek(struct file *file, loff_t offset, int origin)
 {

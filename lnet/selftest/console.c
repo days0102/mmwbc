@@ -362,6 +362,8 @@ lstcon_sesrpc_condition(int transop, struct lstcon_node *nd, void *arg)
         return 1;
 }
 
+#pragma GCC push_options
+#pragma GCC optimize ("O1")
 static int
 lstcon_sesrpc_readent(int transop, struct srpc_msg *msg,
 		      struct lstcon_rpc_ent __user *ent_up)
@@ -1805,6 +1807,7 @@ lstcon_session_info(struct lst_sid __user *sid_up, int __user *key_up,
 
         return rc;
 }
+#pragma GCC pop_options
 
 int
 lstcon_session_end(void)

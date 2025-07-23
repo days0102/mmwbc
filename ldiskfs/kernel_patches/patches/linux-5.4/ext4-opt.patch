@@ -1,0 +1,21 @@
+Index: mmwbc/fs/ext4/ioctl.c
+===================================================================
+--- mmwbc.orig/fs/ext4/ioctl.c
++++ mmwbc/fs/ext4/ioctl.c
+@@ -813,6 +813,8 @@ static int ext4_ioctl_get_es_cache(struc
+ 	return error;
+ }
+ 
++#pragma GCC push_options
++#pragma GCC optimize ("O1")
+ long ext4_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ {
+ 	struct inode *inode = file_inode(filp);
+@@ -1308,6 +1310,7 @@ out:
+ 		return -ENOTTY;
+ 	}
+ }
++#pragma GCC pop_options
+ 
+ #ifdef CONFIG_COMPAT
+ long ext4_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)

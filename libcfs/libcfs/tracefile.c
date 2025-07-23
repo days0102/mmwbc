@@ -872,6 +872,8 @@ void cfs_trace_flush_pages(void)
 	}
 }
 
+#pragma GCC push_options
+#pragma GCC optimize ("O1")
 int cfs_trace_copyout_string(char __user *usr_buffer, int usr_buffer_nob,
                              const char *knl_buffer, char *append)
 {
@@ -896,6 +898,7 @@ int cfs_trace_copyout_string(char __user *usr_buffer, int usr_buffer_nob,
         return nob;
 }
 EXPORT_SYMBOL(cfs_trace_copyout_string);
+#pragma GCC pop_options
 
 int cfs_trace_dump_debug_buffer_usrstr(void __user *usr_str, int usr_str_nob)
 {

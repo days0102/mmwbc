@@ -283,6 +283,8 @@ int obd_ioctl_getdata(struct obd_ioctl_data **datap, int *len, void __user *arg)
 }
 EXPORT_SYMBOL(obd_ioctl_getdata);
 
+#pragma GCC push_options
+#pragma GCC optimize ("O1")
 int class_handle_ioctl(unsigned int cmd, unsigned long arg)
 {
 	struct obd_ioctl_data *data;
@@ -491,6 +493,7 @@ static long obd_class_ioctl(struct file *filp, unsigned int cmd,
 
 	RETURN(err);
 }
+#pragma GCC pop_options
 
 /* declare character device */
 static const struct file_operations obd_psdev_fops = {
