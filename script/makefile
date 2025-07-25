@@ -34,6 +34,9 @@ build_images:
 	sudo dd if=/dev/zero of=lustre-mgt.img bs=1M count=256
 	sudo dd if=/dev/zero of=lustre-mdt.img bs=2M count=1024
 	sudo dd if=/dev/zero of=lustre-ost.img bs=2M count=1024
+	if [ -d ost2 ] && [ ! -f lustre-ost_2.img ]; then \
+		sudo dd if=/dev/zero of=lustre-ost_2.img bs=2M count=1024; \
+	fi
 
 # Set loop devices
 build_loop:
@@ -41,12 +44,16 @@ build_loop:
 	sudo losetup /dev/loop30 lustre-mgt.img
 	sudo losetup /dev/loop31 lustre-mdt.img
 	sudo losetup /dev/loop32 lustre-ost.img
+	if [ -d ost2 ] && [ -f lustre-ost_2.img ]; then \
+		sudo losetup /dev/loop33 lustre-ost_2.img; \
+	fi
 
 remove_loop:
 	@echo "remove loop device..."
 	sudo losetup -d /dev/loop30 || true
 	sudo losetup -d /dev/loop31 || true
 	sudo losetup -d /dev/loop32 || true
+	sudo losetup -d /dev/loop33 || true
 
 # Create Lustre file systems
 mkfs:
@@ -54,12 +61,31 @@ mkfs:
 	sudo mkfs.lustre --mgs /dev/loop30
 	sudo mkfs.lustre --mdt --mgsnode=$(IP)@tcp --fsname=lustrefs --index=0 /dev/loop31
 	sudo mkfs.lustre --ost --mgsnode=$(IP)@tcp --fsname=lustrefs --index=0 /dev/loop32
+	if [ -d ost2 ] && [ -f lustre-ost_2.img ]; then \
+		sudo mkfs.lustre --ost --mgsnode=$(IP)@tcp --fsname=lustrefs --index=1 /dev/loop33; \
+	fi
 
 remkfs:
 	@echo "start mkfs.lustre..."
 	sudo mkfs.lustre --mgs --reformat /dev/loop30
 	sudo mkfs.lustre --mdt --mgsnode=$(IP)@tcp --reformat --fsname=lustrefs --index=0 /dev/loop31
 	sudo mkfs.lustre --ost --mgsnode=$(IP)@tcp --reformat --fsname=lustrefs --index=0 /dev/loop32
+	if [ -d ost2 ] && [ -f lustre-ost_2.img ]; then \
+		sudo mkfs.lustre --ost --mgsnode=$(IP)@tcp --reformat --fsname=lustrefs --index=1 /dev/loop33; \
+	fi
+
+mkfs_ost2:
+	sudo dd if=/dev/zero of=lustre-ost_2.img bs=2M count=1024
+	sudo losetup /dev/loop33 lustre-ost_2.img
+	sudo mkfs.lustre --ost --mgsnode=$(IP)@tcp --fsname=lustrefs --index=2 /dev/loop33
+
+mount_ost2:
+	@echo "start mount ost..."
+	mkdir -p ost2
+	sudo mount -t lustre /dev/loop33 ost2
+
+remove_ost2:
+	sudo umount /dev/loop33 || true
 
 # Mount file systems
 mount: mount_mgt mount_mdt mount_ost mount_client
@@ -78,6 +104,9 @@ mount_ost:
 	@echo "start mount ost..."
 	mkdir -p ost
 	sudo mount -t lustre /dev/loop32 ost
+	if [ -d ost2 ] && [ -f lustre-ost_2.img ]; then \
+		sudo mount -t lustre /dev/loop33 ost2; \
+	fi
 
 mount_client:
 	@echo "start mount client..."
@@ -89,11 +118,13 @@ remove:
 	@echo "cleaning up..."
 	sudo umount client || true
 	sudo umount ost || true
+	sudo umount ost2 || true
 	sudo umount mdt || true
 	sudo umount mgt || true
 	sudo losetup -d /dev/loop30 || true
 	sudo losetup -d /dev/loop31 || true
 	sudo losetup -d /dev/loop32 || true
+	sudo losetup -d /dev/loop33 || true
 	#sudo rm -f lustre-mgt.img lustre-mdt.img lustre-ost.img
 
 debug_mkfs:
@@ -114,6 +145,12 @@ debug_mount:
 
 debug_clean:
 	sudo umount mnt || true
+
+mount_tmpfs:
+	sudo mount -t lustre $(IP)@tcp:/lustrefs tmpfs
+
+wbc:
+	sudo lctl set_param 'llite.*.wbc.conf'="conf flush_mode=aging_keep max_inodes=2000000 size=16G"
 
 .PHONY: check_ip build_images configure mkfs mount mount_mgt mount_mdt mount_ost mount_client remove
 

@@ -141,6 +141,7 @@ script/client/
 script/mgt/
 script/mdt/
 script/ost/
+script/ost2/
 
 lustre/tests/expand_truncate_test
 lustre/tests/foreign_symlink_striping
