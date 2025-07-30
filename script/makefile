@@ -152,6 +152,10 @@ mount_tmpfs:
 wbc:
 	sudo lctl set_param 'llite.*.wbc.conf'="conf flush_mode=aging_keep max_inodes=2000000 size=16G"
 
+wbc_batch:
+	sudo lctl set_param 'llite.*.wbc.conf'="conf flush_mode=aging_keep flush_pol=batch max_batch_count=256 dirty_flush_thresh=256 max_inodes=2000000 size=16G"
+
+
 .PHONY: check_ip build_images configure mkfs mount mount_mgt mount_mdt mount_ost mount_client remove
 
 #####################################
